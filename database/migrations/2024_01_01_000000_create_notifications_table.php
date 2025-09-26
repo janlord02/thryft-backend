@@ -36,6 +36,10 @@ return new class extends Migration {
             $table->timestamps();
 
             $table->unique(['notification_id', 'user_id']);
+
+            // Add indexes for better performance
+            $table->index(['user_id', 'read']);
+            $table->index(['notification_id', 'read']);
         });
 
         Schema::create('notification_preferences', function (Blueprint $table) {
@@ -53,11 +57,15 @@ return new class extends Migration {
         Schema::create('push_subscriptions', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
-            $table->text('endpoint'); // WebPush endpoint URL
-            $table->text('p256dh_key'); // Public key
-            $table->text('auth_token'); // Auth token
+            $table->string('endpoint'); // WebPush endpoint URL
+            $table->string('p256dh_key'); // Public key
+            $table->string('auth_token'); // Auth token
             $table->boolean('active')->default(true);
             $table->timestamps();
+
+            // Add indexes for better performance
+            $table->index(['user_id', 'active']);
+            $table->index('endpoint');
         });
     }
 
