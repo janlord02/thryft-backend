@@ -45,7 +45,7 @@ class VerifyEmailNotification extends VerifyEmail
      */
     protected function verificationUrl($notifiable)
     {
-        $frontendUrl = rtrim(env('FRONTEND_URL', 'http://localhost:9003'), '/');
+        $frontendUrl = rtrim(env('FRONTEND_URL', 'https://app.thryft.net/'), '/');
 
         $verifyUrl = URL::temporarySignedRoute(
             'verification.verify',
