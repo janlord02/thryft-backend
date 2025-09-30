@@ -84,7 +84,7 @@ class EmailVerificationController extends Controller
     public function verifyWeb(Request $request)
     {
         $user = User::find($request->route('id'));
-        $frontendUrl = rtrim(env('FRONTEND_URL', 'http://localhost:9000'), '/');
+        $frontendUrl = rtrim(env('FRONTEND_URL', 'http://localhost:9003'), '/');
 
         if (!$user) {
             abort(404, 'User not found.');

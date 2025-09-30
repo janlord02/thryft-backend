@@ -15,6 +15,6 @@ Route::get('/email/verify/{id}/{hash}', [EmailVerificationController::class, 've
 
 // Password reset route
 Route::get('/password/reset/{token}', function ($token) {
-    $frontendUrl = rtrim(env('FRONTEND_URL', 'http://localhost:9000'), '/');
+    $frontendUrl = rtrim(env('FRONTEND_URL', 'http://localhost:9003'), '/');
     return redirect($frontendUrl . '/auth/reset-password?token=' . $token);
 })->name('password.reset');
