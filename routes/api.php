@@ -124,6 +124,10 @@ Route::middleware('maintenance')->group(function () {
         Route::post('/products/favorite', [UserDashboardController::class, 'toggleProductFavorite']);
         Route::get('/products/favorites', [UserDashboardController::class, 'getFavoriteProducts']);
 
+        // Business favorites
+        Route::get('/businesses/favorites', [UserDashboardController::class, 'getFavoriteBusinesses']);
+        Route::post('/businesses/favorite', [UserDashboardController::class, 'toggleBusinessFavorite']);
+
         // Theme settings route (for all authenticated users)
         Route::get('/settings/theme', [SettingsController::class, 'getThemeSettings']);
 

@@ -312,6 +312,8 @@ class UserDashboardController extends Controller
                         'state' => $business->state,
                         'zipcode' => $business->zipcode,
                         'country' => $business->country,
+                        'latitude' => $business->latitude,
+                        'longitude' => $business->longitude,
                         'profile_image_url' => $business->profile_image_url,
                     ],
                     'products' => [
@@ -1105,6 +1107,126 @@ class UserDashboardController extends Controller
                 'coupon_id' => $claimedCoupon->id,
                 'error' => $e->getMessage(),
             ]);
+        }
+    }
+
+    /**
+     * Get user's favorite businesses (businesses that have favorited products).
+     */
+    public function getFavoriteBusinesses(Request $request)
+    {
+        try {
+            $user = $request->user();
+            $page = $request->get('page', 1);
+            $limit = $request->get('limit', 12);
+
+            // Get businesses that have products favorited by the user
+            $favoriteBusinesses = User::whereHas('products', function ($query) use ($user) {
+                $query->whereHas('favoritedBy', function ($subQuery) use ($user) {
+                    $subQuery->where('user_id', $user->id);
+                });
+            })
+                ->with([
+                    'products' => function ($query) use ($user) {
+                        $query->whereHas('favoritedBy', function ($subQuery) use ($user) {
+                            $subQuery->where('user_id', $user->id);
+                        });
+                    }
+                ])
+                ->paginate($limit, ['*'], 'page', $page);
+
+            // Format the businesses data
+            $formattedBusinesses = $favoriteBusinesses->getCollection()->map(function ($business) use ($user) {
+                $favoriteProductsCount = $business->products->count();
+
+                return [
+                    'id' => $business->id,
+                    'name' => $business->name,
+                    'business_name' => $business->business_name,
+                    'business_description' => $business->business_description,
+                    'email' => $business->email,
+                    'phone' => $business->phone,
+                    'address' => $business->address,
+                    'city' => $business->city,
+                    'state' => $business->state,
+                    'zipcode' => $business->zipcode,
+                    'country' => $business->country,
+                    'latitude' => $business->latitude,
+                    'longitude' => $business->longitude,
+                    'profile_image_url' => $business->profile_image_url,
+                    'favorite_products_count' => $favoriteProductsCount,
+                    'created_at' => $business->created_at,
+                    'updated_at' => $business->updated_at,
+                ];
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $formattedBusinesses->values()->toArray(),
+                'pagination' => [
+                    'current_page' => $favoriteBusinesses->currentPage(),
+                    'last_page' => $favoriteBusinesses->lastPage(),
+                    'per_page' => $favoriteBusinesses->perPage(),
+                    'total' => $favoriteBusinesses->total(),
+                    'has_more' => $favoriteBusinesses->hasMorePages(),
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to get favorite businesses',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Toggle business favorite status (remove business from favorites).
+     */
+    public function toggleBusinessFavorite(Request $request)
+    {
+        try {
+            $request->validate([
+                'business_id' => 'required|exists:users,id',
+                'action' => 'required|in:add,remove',
+            ]);
+
+            $user = $request->user();
+            $businessId = $request->business_id;
+            $action = $request->action;
+
+            // Check if business exists
+            $business = User::findOrFail($businessId);
+
+            if ($action === 'remove') {
+                // Remove all products from this business from favorites
+                $business->products()->each(function ($product) use ($user) {
+                    $user->favoriteProducts()->detach($product->id);
+                });
+
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'Business removed from favorites',
+                    'data' => [
+                        'is_favorite' => false,
+                    ],
+                ]);
+            } else {
+                // For 'add' action, we don't add the business itself to favorites
+                // Instead, we would need to add specific products
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Cannot add business to favorites directly. Please favorite specific products.',
+                ], 400);
+            }
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to update business favorite status',
+                'error' => $e->getMessage(),
+            ], 500);
         }
     }
 }

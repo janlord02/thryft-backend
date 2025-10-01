@@ -44,6 +44,12 @@ class Coupon extends Model
         'terms_conditions' => 'array',
     ];
 
+    protected $appends = [
+        'status',
+        'formatted_discount',
+        'is_valid',
+    ];
+
     protected static function boot()
     {
         parent::boot();
