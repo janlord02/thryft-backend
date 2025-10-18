@@ -270,6 +270,7 @@ class UserDashboardController extends Controller
                             'code' => $coupon->code,
                             'title' => $coupon->title,
                             'description' => $coupon->description,
+                            'banner_image_url' => $coupon->banner_image_url,
                             'discount_type' => $coupon->discount_type,
                             'discount_amount' => $coupon->discount_amount,
                             'discount_percentage' => $coupon->discount_percentage,
@@ -419,7 +420,7 @@ class UserDashboardController extends Controller
                 'status' => 'success',
                 'message' => 'Coupon claimed successfully!',
                 'data' => [
-                    'claimed_coupon' => $claimedCoupon->load(['business', 'product']),
+                    'claimed_coupon' => $claimedCoupon->load(['business', 'product', 'coupon']),
                 ],
             ]);
 
@@ -473,6 +474,7 @@ class UserDashboardController extends Controller
                     'usage_notes' => $claimedCoupon->usage_notes,
                     'is_expired' => $claimedCoupon->is_expired,
                     'is_usable' => $claimedCoupon->is_usable,
+                    'banner_image_url' => $claimedCoupon->coupon ? $claimedCoupon->coupon->banner_image_url : null,
                     'business' => [
                         'id' => $claimedCoupon->business->id,
                         'name' => $claimedCoupon->business->business_name ?? $claimedCoupon->business->name,

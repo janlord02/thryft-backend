@@ -15,6 +15,7 @@ class Coupon extends Model
         'title',
         'code',
         'description',
+        'banner_image',
         'qr_code',
         'discount_amount',
         'discount_percentage',
@@ -48,6 +49,7 @@ class Coupon extends Model
         'status',
         'formatted_discount',
         'is_valid',
+        'banner_image_url',
     ];
 
     protected static function boot()
@@ -148,6 +150,14 @@ class Coupon extends Model
     public function getIsValidAttribute()
     {
         return $this->status === 'active';
+    }
+
+    public function getBannerImageUrlAttribute()
+    {
+        if ($this->banner_image) {
+            return asset('storage/' . $this->banner_image);
+        }
+        return null;
     }
 
     // Methods

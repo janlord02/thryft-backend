@@ -59,6 +59,7 @@ class CouponController extends Controller
             'title' => 'required|string|max:255',
             'code' => 'nullable|string|max:20|unique:coupons,code',
             'description' => 'nullable|string',
+            'banner_image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'discount_amount' => 'nullable|numeric|min:0',
             'discount_percentage' => 'nullable|numeric|min:0|max:100',
             'discount_type' => 'required|in:fixed,percentage',
@@ -75,11 +76,29 @@ class CouponController extends Controller
         ]);
 
         return DB::transaction(function () use ($request) {
+            // Handle banner image upload
+            $bannerImagePath = null;
+            if ($request->hasFile('banner_image')) {
+                $bannerImagePath = $request->file('banner_image')->store('coupon-banners', 'public');
+            }
+
+            // Convert string booleans to actual booleans for FormData
+            $isActive = $request->is_active ?? true;
+            $isFeatured = $request->is_featured ?? false;
+
+            if (is_string($isActive)) {
+                $isActive = filter_var($isActive, FILTER_VALIDATE_BOOLEAN);
+            }
+            if (is_string($isFeatured)) {
+                $isFeatured = filter_var($isFeatured, FILTER_VALIDATE_BOOLEAN);
+            }
+
             $coupon = Coupon::create([
                 'user_id' => Auth::id(),
                 'title' => $request->title,
                 'code' => $request->code ?: strtoupper(Str::random(8)),
                 'description' => $request->description,
+                'banner_image' => $bannerImagePath,
                 'discount_amount' => $request->discount_amount,
                 'discount_percentage' => $request->discount_percentage,
                 'discount_type' => $request->discount_type,
@@ -88,8 +107,8 @@ class CouponController extends Controller
                 'per_user_limit' => $request->per_user_limit ?? 1,
                 'starts_at' => $request->starts_at,
                 'expires_at' => $request->expires_at,
-                'is_active' => $request->is_active ?? true,
-                'is_featured' => $request->is_featured ?? false,
+                'is_active' => $isActive,
+                'is_featured' => $isFeatured,
                 'terms_conditions' => $request->terms_conditions,
             ]);
 
@@ -142,10 +161,31 @@ class CouponController extends Controller
             ], 404);
         }
 
-        $request->validate([
+        // Handle FormData manually for PUT requests
+        $data = $request->all();
+
+        // Remove _method field if present (Laravel's method spoofing)
+        unset($data['_method']);
+
+        // Debug: Log what we're receiving
+        \Log::info('Update request data:', $data);
+        \Log::info('Title:', ['title' => $data['title'] ?? null]);
+        \Log::info('Discount type:', ['discount_type' => $data['discount_type'] ?? null]);
+
+        // Convert string booleans to actual booleans for FormData
+        if (isset($data['is_active'])) {
+            $data['is_active'] = filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN);
+        }
+        if (isset($data['is_featured'])) {
+            $data['is_featured'] = filter_var($data['is_featured'], FILTER_VALIDATE_BOOLEAN);
+        }
+
+        // Manual validation for FormData
+        $validator = \Validator::make($data, [
             'title' => 'required|string|max:255',
             'code' => 'nullable|string|max:20|unique:coupons,code,' . $coupon->id,
             'description' => 'nullable|string',
+            'banner_image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'discount_amount' => 'nullable|numeric|min:0',
             'discount_percentage' => 'nullable|numeric|min:0|max:100',
             'discount_type' => 'required|in:fixed,percentage',
@@ -161,27 +201,47 @@ class CouponController extends Controller
             'terms_conditions' => 'nullable|array',
         ]);
 
-        return DB::transaction(function () use ($request, $coupon) {
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        return DB::transaction(function () use ($data, $request, $coupon) {
+            // Handle banner image upload
+            $bannerImagePath = $coupon->banner_image; // Keep existing image by default
+            if ($request->hasFile('banner_image')) {
+                // Delete old image if exists
+                if ($coupon->banner_image) {
+                    Storage::disk('public')->delete($coupon->banner_image);
+                }
+                // Store new image
+                $bannerImagePath = $request->file('banner_image')->store('coupon-banners', 'public');
+            }
+
             $coupon->update([
-                'title' => $request->title,
-                'code' => $request->code ?: $coupon->code,
-                'description' => $request->description,
-                'discount_amount' => $request->discount_amount,
-                'discount_percentage' => $request->discount_percentage,
-                'discount_type' => $request->discount_type,
-                'minimum_amount' => $request->minimum_amount,
-                'usage_limit' => $request->usage_limit,
-                'per_user_limit' => $request->per_user_limit ?? 1,
-                'starts_at' => $request->starts_at,
-                'expires_at' => $request->expires_at,
-                'is_active' => $request->is_active ?? true,
-                'is_featured' => $request->is_featured ?? false,
-                'terms_conditions' => $request->terms_conditions,
+                'title' => $data['title'],
+                'code' => $data['code'] ?: $coupon->code,
+                'description' => $data['description'] ?? null,
+                'banner_image' => $bannerImagePath,
+                'discount_amount' => $data['discount_amount'] ?? null,
+                'discount_percentage' => $data['discount_percentage'] ?? null,
+                'discount_type' => $data['discount_type'],
+                'minimum_amount' => $data['minimum_amount'] ?? null,
+                'usage_limit' => $data['usage_limit'] ?? null,
+                'per_user_limit' => $data['per_user_limit'] ?? 1,
+                'starts_at' => $data['starts_at'] ?? null,
+                'expires_at' => $data['expires_at'] ?? null,
+                'is_active' => $data['is_active'] ?? true,
+                'is_featured' => $data['is_featured'] ?? false,
+                'terms_conditions' => $data['terms_conditions'] ?? null,
             ]);
 
             // Sync products
-            if ($request->has('product_ids')) {
-                $coupon->products()->sync($request->product_ids ?? []);
+            if (isset($data['product_ids'])) {
+                $coupon->products()->sync($data['product_ids'] ?? []);
             }
 
             return response()->json([

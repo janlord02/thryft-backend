@@ -111,7 +111,7 @@ class UserController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => $passwordRules,
-            'role' => ['required', Rule::in(['user', 'super-admin'])],
+            'role' => ['required', Rule::in(['user', 'super-admin', 'business'])],
             'phone' => 'nullable|string|max:20',
             'bio' => 'nullable|string|max:1000',
         ]);
@@ -191,7 +191,7 @@ class UserController extends Controller
                 Rule::unique('users')->ignore($user->id),
             ],
             'password' => $passwordRules,
-            'role' => ['required', Rule::in(['user', 'super-admin'])],
+            'role' => ['required', Rule::in(['user', 'super-admin', 'business'])],
             'phone' => 'nullable|string|max:20',
             'bio' => 'nullable|string|max:1000',
         ]);

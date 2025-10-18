@@ -18,7 +18,10 @@ use App\Http\Controllers\ProductController;
 use App\Http\Controllers\TagController;
 use App\Http\Controllers\CouponController;
 use App\Http\Controllers\Admin\PromoCodeController;
+use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\NotificationController as UserNotificationController;
+use App\Http\Controllers\BusinessSubscriptionController;
+use App\Http\Controllers\SearchController;
 
 /*
 |--------------------------------------------------------------------------
@@ -191,6 +194,14 @@ Route::middleware('maintenance')->group(function () {
                 Route::get('/stats', [SubscriptionController::class, 'stats']);
                 Route::get('/options', [SubscriptionController::class, 'options']);
                 Route::post('/reorder', [SubscriptionController::class, 'reorder']);
+
+                // Assignment routes (must come before parameterized routes)
+                Route::get('/business-users', [BusinessSubscriptionController::class, 'getBusinessUsers']);
+                Route::get('/recent-assignments', [BusinessSubscriptionController::class, 'getRecentAssignments']);
+                Route::post('/assign', [BusinessSubscriptionController::class, 'assignSubscription']);
+                Route::post('/{assignmentId}/cancel', [BusinessSubscriptionController::class, 'cancelAssignment']);
+
+                // Parameterized routes (must come after specific routes)
                 Route::get('/{subscription}', [SubscriptionController::class, 'show']);
                 Route::put('/{subscription}', [SubscriptionController::class, 'update']);
                 Route::delete('/{subscription}', [SubscriptionController::class, 'destroy']);
@@ -198,6 +209,9 @@ Route::middleware('maintenance')->group(function () {
                 Route::post('/{subscription}/toggle-visibility', [SubscriptionController::class, 'toggleVisibility']);
                 Route::get('/{subscription}/subscribers', [SubscriptionController::class, 'subscribers']);
             });
+
+            // Payments list
+            Route::get('/payments', [PaymentController::class, 'index']);
 
             // Category management routes
             Route::prefix('categories')->group(function () {
@@ -257,6 +271,7 @@ Route::middleware('maintenance')->group(function () {
                 Route::get('/products', [CouponController::class, 'getProducts']);
                 Route::get('/{coupon}', [CouponController::class, 'show']);
                 Route::put('/{coupon}', [CouponController::class, 'update']);
+                Route::post('/{coupon}', [CouponController::class, 'update']); // For FormData with _method=PUT
                 Route::delete('/{coupon}', [CouponController::class, 'destroy']);
                 Route::post('/{coupon}/toggle-featured', [CouponController::class, 'toggleFeatured']);
                 Route::post('/validate', [CouponController::class, 'validate']);
@@ -280,12 +295,41 @@ Route::middleware('maintenance')->group(function () {
             Route::post('/test-push', [UserNotificationController::class, 'testPushNotification']);
             Route::post('/test', [UserNotificationController::class, 'sendTestNotification']);
         });
+
+        // Business subscription routes (for all authenticated users)
+        Route::prefix('subscriptions')->group(function () {
+            Route::get('/check', [BusinessSubscriptionController::class, 'check']);
+            Route::get('/current', [BusinessSubscriptionController::class, 'current']);
+            Route::get('/plans', [BusinessSubscriptionController::class, 'plans']);
+            Route::post('/cancel', [BusinessSubscriptionController::class, 'cancel']);
+            Route::post('/claim-free', [BusinessSubscriptionController::class, 'claimFree']);
+            Route::post('/free/update-expiry', [BusinessSubscriptionController::class, 'updateFreeExpiry']);
+        });
+
+
+        // Stripe routes (for all authenticated users)
+        Route::prefix('stripe')->group(function () {
+            Route::get('/config', [BusinessSubscriptionController::class, 'stripeConfig']);
+            Route::post('/create-setup-intent', [BusinessSubscriptionController::class, 'createSetupIntent']);
+            Route::post('/create-subscription', [BusinessSubscriptionController::class, 'createSubscription']);
+            Route::post('/create-payment-intent', [BusinessSubscriptionController::class, 'createPaymentIntent']);
+            Route::post('/payment-success', [BusinessSubscriptionController::class, 'handlePaymentSuccess']);
+        });
+    });
+
+    // Search routes (public)
+    Route::prefix('search')->group(function () {
+        Route::get('/', [SearchController::class, 'search']);
+        Route::get('/suggestions', [SearchController::class, 'suggestions']);
     });
 
     // Test routes
     Route::post('/test/mark-coupon-used', [App\Http\Controllers\TestController::class, 'testMarkAsUsed']);
     Route::get('/test/pusher', [App\Http\Controllers\PusherTestController::class, 'testConnection']);
 });
+
+// Stripe webhook route (outside maintenance middleware)
+Route::post('/stripe/webhook', [BusinessSubscriptionController::class, 'webhook']);
 
 // Broadcasting authentication route
 Route::post('/broadcasting/auth', function (Request $request) {

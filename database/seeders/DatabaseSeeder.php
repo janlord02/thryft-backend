@@ -26,6 +26,7 @@ class DatabaseSeeder extends Seeder
             SettingsSeeder::class,
             NotificationPreferenceSeeder::class,
             CategorySeeder::class,
+            SubscriptionSeeder::class,
         ]);
     }
 }
