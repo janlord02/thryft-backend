@@ -829,7 +829,8 @@ class UserDashboardController extends Controller
         try {
             $user = $request->user();
             $couponCode = $request->get('couponCode');
-            $searchQuery = $request->get('searchQuery');
+            // Accept both 'query' and 'searchQuery' for flexibility
+            $searchQuery = $request->get('query') ?? $request->get('searchQuery');
 
             if (!$couponCode || !$searchQuery) {
                 return response()->json([
