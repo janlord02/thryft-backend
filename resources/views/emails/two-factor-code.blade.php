@@ -94,7 +94,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="logo">{{ config('app.name', 'Boilerplate') }}</div>
+            <div class="logo">{{ config('app.name', 'Thryft') }}</div>
             <div class="title">Two-Factor Authentication</div>
             <div class="subtitle">Your verification code is ready</div>
         </div>
@@ -124,11 +124,11 @@
         <p>If you're having trouble with the code, you can request a new one from the login page.</p>
 
         <p>Best regards,<br>
-        The {{ config('app.name', 'Boilerplate') }} Team</p>
+        The {{ config('app.name', 'Thryft') }} Team</p>
 
         <div class="footer">
             <p>This is an automated message. Please do not reply to this email.</p>
-            <p>&copy; {{ date('Y') }} {{ config('app.name', 'Boilerplate') }}. All rights reserved.</p>
+            <p>&copy; {{ date('Y') }} {{ config('app.name', 'Thryft') }}. All rights reserved.</p>
         </div>
     </div>
 </body>

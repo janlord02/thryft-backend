@@ -248,7 +248,7 @@ class SettingsController extends Controller
             // General Settings
             [
                 'key' => 'app_name',
-                'value' => 'Boilerplate',
+                'value' => 'Thryft',
                 'type' => 'string',
                 'group' => 'general',
                 'description' => 'Application name displayed throughout the app',
@@ -436,7 +436,7 @@ class SettingsController extends Controller
             ],
             [
                 'key' => 'from_name',
-                'value' => 'Boilerplate',
+                'value' => 'Thryft',
                 'type' => 'string',
                 'group' => 'email',
                 'description' => 'Default sender name',
