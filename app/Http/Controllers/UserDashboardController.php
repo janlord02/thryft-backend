@@ -67,6 +67,8 @@ class UserDashboardController extends Controller
             $page = $request->get('page', 1);
             $search = $request->get('search');
             $category = $request->get('category'); // Filter by category
+            $couponLimit = (int) $request->get('coupon_limit', 3);
+            $couponLimit = $couponLimit > 0 ? min($couponLimit, 10) : 3;
 
             // Validate required parameters
             if (!$latitude || !$longitude) {
@@ -95,7 +97,16 @@ class UserDashboardController extends Controller
             $offset = ($page - 1) * $limit;
 
             // Build the query
-            $query = User::nearbyBusinesses($latitude, $longitude, $radius, $limit + $offset);
+            $query = User::nearbyBusinesses($latitude, $longitude, $radius, $limit + $offset)
+                ->with([
+                    'coupons' => function ($couponQuery) use ($couponLimit) {
+                        $couponQuery->active()
+                            ->valid()
+                            ->orderByDesc('is_featured')
+                            ->orderBy('expires_at')
+                            ->take($couponLimit);
+                    }
+                ]);
 
             // Add search functionality if provided
             if ($search) {
@@ -156,6 +167,28 @@ class UserDashboardController extends Controller
                     'distance' => round($business->distance, 2),
                     'created_at' => $business->created_at,
                     'updated_at' => $business->updated_at,
+                    'coupons' => $business->coupons->map(function ($coupon) {
+                        return [
+                            'id' => $coupon->id,
+                            'title' => $coupon->title,
+                            'code' => $coupon->code,
+                            'description' => $coupon->description,
+                            'discount_type' => $coupon->discount_type,
+                            'discount_amount' => $coupon->discount_amount,
+                            'discount_percentage' => $coupon->discount_percentage,
+                            'formatted_discount' => $coupon->formatted_discount,
+                            'minimum_amount' => $coupon->minimum_amount,
+                            'usage_limit' => $coupon->usage_limit,
+                            'used_count' => $coupon->used_count,
+                            'per_user_limit' => $coupon->per_user_limit,
+                            'starts_at' => $coupon->starts_at,
+                            'expires_at' => $coupon->expires_at,
+                            'status' => $coupon->status,
+                            'is_featured' => $coupon->is_featured,
+                            'banner_image_url' => $coupon->banner_image_url,
+                            'terms_conditions' => $coupon->terms_conditions,
+                        ];
+                    }),
                 ];
             });
 
@@ -179,6 +212,7 @@ class UserDashboardController extends Controller
                     'radius' => $radius,
                     'search' => $search,
                     'category' => $category,
+                    'coupon_limit' => $couponLimit,
                 ],
             ]);
 

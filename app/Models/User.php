@@ -11,6 +11,7 @@ use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\Models\Notification;
+use App\Models\Coupon;
 
 /**
  *
@@ -234,6 +235,14 @@ class User extends Authenticatable implements MustVerifyEmail
     public function products()
     {
         return $this->hasMany(Product::class);
+    }
+
+    /**
+     * Get the coupons created by the user (business).
+     */
+    public function coupons(): HasMany
+    {
+        return $this->hasMany(Coupon::class);
     }
 
     /**
