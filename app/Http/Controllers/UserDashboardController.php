@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
 use App\Models\ActivityLog;
 use App\Models\User;
 use App\Models\Product;
@@ -509,6 +510,7 @@ class UserDashboardController extends Controller
                     'is_expired' => $claimedCoupon->is_expired,
                     'is_usable' => $claimedCoupon->is_usable,
                     'banner_image_url' => $claimedCoupon->coupon ? $claimedCoupon->coupon->banner_image_url : null,
+                    'redeem_instructions' => $claimedCoupon->coupon ? $claimedCoupon->coupon->redeem_instructions_text : null,
                     'business' => [
                         'id' => $claimedCoupon->business->id,
                         'name' => $claimedCoupon->business->business_name ?? $claimedCoupon->business->name,
@@ -644,6 +646,17 @@ class UserDashboardController extends Controller
                 'timestamp' => $timestamp,
             ]);
 
+            if (!$userId || !$businessId) {
+                if (!$couponCode) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Coupon code is required',
+                    ], 400);
+                }
+
+                return $this->respondWithCouponValidation($user, $couponCode);
+            }
+
             // Find the claimed coupon by coupon code and user ID
             $claimedCoupon = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
                 ->where('coupon_code', $couponCode)
@@ -715,73 +728,7 @@ class UserDashboardController extends Controller
             $user = $request->user();
             $couponCode = $request->get('couponCode');
 
-            // Find all claimed coupons by code for this business
-            $claimedCoupons = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
-                ->where('coupon_code', $couponCode)
-                ->where('business_id', $user->id)
-                ->where('status', 'claimed')
-                ->get();
-
-            if ($claimedCoupons->isEmpty()) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Coupon not found or not claimed for your business. Please ensure you are logged in as the correct business and the coupon code is valid.',
-                ], 404);
-            }
-
-            // If multiple customers have claimed the same coupon code
-            if ($claimedCoupons->count() > 1) {
-                $customers = $claimedCoupons->map(function ($coupon) {
-                    return [
-                        'claimedCouponId' => $coupon->id,
-                        'customerName' => $coupon->user->name,
-                        'customerEmail' => $coupon->user->email,
-                        'claimedAt' => $coupon->created_at,
-                        'isExpired' => $coupon->is_expired,
-                        'isUsed' => $coupon->status === 'used',
-                    ];
-                });
-
-                return response()->json([
-                    'status' => 'multiple',
-                    'message' => 'Multiple customers have claimed this coupon code. Please select which customer to validate.',
-                    'customers' => $customers,
-                ]);
-            }
-
-            // Single customer case
-            $claimedCoupon = $claimedCoupons->first();
-
-            // Check if coupon is still valid (not expired)
-            if ($claimedCoupon->is_expired) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Coupon has expired',
-                ], 400);
-            }
-
-            // Check if coupon is already used
-            if ($claimedCoupon->status === 'used') {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Coupon has already been used',
-                ], 400);
-            }
-
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Coupon is valid and ready to use',
-                'coupon' => [
-                    'claimedCouponId' => $claimedCoupon->id,
-                    'couponCode' => $claimedCoupon->coupon_code,
-                    'couponTitle' => $claimedCoupon->coupon_title,
-                    'discountDisplay' => $claimedCoupon->discount_display,
-                    'customerName' => $claimedCoupon->user->name,
-                    'productName' => $claimedCoupon->product ? $claimedCoupon->product->name : 'General Store Discount',
-                    'minimumAmount' => $claimedCoupon->minimum_amount,
-                    'expiresAt' => $claimedCoupon->expires_at,
-                ],
-            ]);
+            return $this->respondWithCouponValidation($user, $couponCode);
 
         } catch (\Exception $e) {
             return response()->json([
@@ -853,6 +800,79 @@ class UserDashboardController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    private function respondWithCouponValidation(User $businessUser, ?string $couponCode): JsonResponse
+    {
+        if (!$couponCode || trim($couponCode) === '') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Coupon code is required',
+            ], 400);
+        }
+
+        $claimedCoupons = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
+            ->where('coupon_code', $couponCode)
+            ->where('business_id', $businessUser->id)
+            ->where('status', 'claimed')
+            ->get();
+
+        if ($claimedCoupons->isEmpty()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Coupon not found or not claimed for your business. Please ensure you are logged in as the correct business and the coupon code is valid.',
+            ], 404);
+        }
+
+        if ($claimedCoupons->count() > 1) {
+            $customers = $claimedCoupons->map(function ($coupon) {
+                return [
+                    'claimedCouponId' => $coupon->id,
+                    'customerName' => $coupon->user->name,
+                    'customerEmail' => $coupon->user->email,
+                    'claimedAt' => $coupon->created_at,
+                    'isExpired' => $coupon->is_expired,
+                    'isUsed' => $coupon->status === 'used',
+                ];
+            });
+
+            return response()->json([
+                'status' => 'multiple',
+                'message' => 'Multiple customers have claimed this coupon code. Please select which customer to validate.',
+                'customers' => $customers,
+            ]);
+        }
+
+        $claimedCoupon = $claimedCoupons->first();
+
+        if ($claimedCoupon->is_expired) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Coupon has expired',
+            ], 400);
+        }
+
+        if ($claimedCoupon->status === 'used') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Coupon has already been used',
+            ], 400);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Coupon is valid and ready to use',
+            'coupon' => [
+                'claimedCouponId' => $claimedCoupon->id,
+                'couponCode' => $claimedCoupon->coupon_code,
+                'couponTitle' => $claimedCoupon->coupon_title,
+                'discountDisplay' => $claimedCoupon->discount_display,
+                'customerName' => $claimedCoupon->user->name,
+                'productName' => $claimedCoupon->product ? $claimedCoupon->product->name : 'General Store Discount',
+                'minimumAmount' => $claimedCoupon->minimum_amount,
+                'expiresAt' => $claimedCoupon->expires_at,
+            ],
+        ]);
     }
 
     /**
