@@ -246,6 +246,9 @@ class UserDashboardController extends Controller
                 ], 404);
             }
 
+            // Determine business category name
+            $businessCategoryName = $this->resolveBusinessCategoryName($business);
+
             // Get products with relationships
             $products = Product::with(['category', 'coupons'])
                 ->where('user_id', $businessId)
@@ -351,6 +354,7 @@ class UserDashboardController extends Controller
                         'latitude' => $business->latitude,
                         'longitude' => $business->longitude,
                         'profile_image_url' => $business->profile_image_url,
+                    'category_name' => $businessCategoryName,
                     ],
                     'products' => [
                         'all' => $allProducts,
@@ -731,8 +735,8 @@ class UserDashboardController extends Controller
             return $this->respondWithCouponValidation($user, $couponCode);
 
         } catch (\Exception $e) {
-            return response()->json([
-                'status' => 'error',
+                return response()->json([
+                    'status' => 'error',
                 'message' => 'Failed to validate coupon',
                 'error' => $e->getMessage(),
             ], 500);
@@ -814,15 +818,15 @@ class UserDashboardController extends Controller
         $claimedCoupons = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
             ->where('coupon_code', $couponCode)
             ->where('business_id', $businessUser->id)
-            ->where('status', 'claimed')
+                ->where('status', 'claimed')
             ->get();
 
         if ($claimedCoupons->isEmpty()) {
-            return response()->json([
-                'status' => 'error',
+                return response()->json([
+                    'status' => 'error',
                 'message' => 'Coupon not found or not claimed for your business. Please ensure you are logged in as the correct business and the coupon code is valid.',
-            ], 404);
-        }
+                ], 404);
+            }
 
         if ($claimedCoupons->count() > 1) {
             $customers = $claimedCoupons->map(function ($coupon) {
@@ -845,34 +849,34 @@ class UserDashboardController extends Controller
 
         $claimedCoupon = $claimedCoupons->first();
 
-        if ($claimedCoupon->is_expired) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Coupon has expired',
-            ], 400);
-        }
+            if ($claimedCoupon->is_expired) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Coupon has expired',
+                ], 400);
+            }
 
-        if ($claimedCoupon->status === 'used') {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Coupon has already been used',
-            ], 400);
-        }
+            if ($claimedCoupon->status === 'used') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Coupon has already been used',
+                ], 400);
+            }
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Coupon is valid and ready to use',
-            'coupon' => [
-                'claimedCouponId' => $claimedCoupon->id,
-                'couponCode' => $claimedCoupon->coupon_code,
-                'couponTitle' => $claimedCoupon->coupon_title,
-                'discountDisplay' => $claimedCoupon->discount_display,
-                'customerName' => $claimedCoupon->user->name,
-                'productName' => $claimedCoupon->product ? $claimedCoupon->product->name : 'General Store Discount',
-                'minimumAmount' => $claimedCoupon->minimum_amount,
-                'expiresAt' => $claimedCoupon->expires_at,
-            ],
-        ]);
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Coupon is valid and ready to use',
+                'coupon' => [
+                    'claimedCouponId' => $claimedCoupon->id,
+                    'couponCode' => $claimedCoupon->coupon_code,
+                    'couponTitle' => $claimedCoupon->coupon_title,
+                    'discountDisplay' => $claimedCoupon->discount_display,
+                    'customerName' => $claimedCoupon->user->name,
+                    'productName' => $claimedCoupon->product ? $claimedCoupon->product->name : 'General Store Discount',
+                    'minimumAmount' => $claimedCoupon->minimum_amount,
+                    'expiresAt' => $claimedCoupon->expires_at,
+                ],
+            ]);
     }
 
     /**
@@ -1285,5 +1289,45 @@ class UserDashboardController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Resolve the most relevant category name for a business.
+     */
+    private function resolveBusinessCategoryName(User $business): string
+    {
+        $candidates = [
+            $business->category_name ?? null,
+            $business->category ?? null,
+            $business->primary_category ?? null,
+            $business->business_category ?? null,
+        ];
+
+        foreach ($candidates as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        $productWithCategory = Product::with('category')
+            ->where('user_id', $business->id)
+            ->whereNotNull('category_id')
+            ->orderBy('created_at')
+            ->first();
+
+        if ($productWithCategory && $productWithCategory->category) {
+            return $productWithCategory->category->name ?? 'Business';
+        }
+
+        $productWithCategoryName = Product::where('user_id', $business->id)
+            ->whereNotNull('category_name')
+            ->orderBy('created_at')
+            ->first();
+
+        if ($productWithCategoryName && $productWithCategoryName->category_name) {
+            return $productWithCategoryName->category_name;
+        }
+
+        return 'Business';
     }
 }
