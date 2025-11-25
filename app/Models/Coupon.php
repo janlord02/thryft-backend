@@ -15,6 +15,7 @@ class Coupon extends Model
         'title',
         'code',
         'description',
+        'redeem_instructions',
         'banner_image',
         'qr_code',
         'discount_amount',
@@ -50,6 +51,7 @@ class Coupon extends Model
         'formatted_discount',
         'is_valid',
         'banner_image_url',
+        'redeem_instructions_text',
     ];
 
     protected static function boot()
@@ -158,6 +160,15 @@ class Coupon extends Model
             return asset('storage/' . $this->banner_image);
         }
         return null;
+    }
+
+    public function getRedeemInstructionsTextAttribute()
+    {
+        $default = 'Show this QR code to the business to redeem your coupon.';
+        if ($this->redeem_instructions && trim($this->redeem_instructions) !== '') {
+            return trim($this->redeem_instructions);
+        }
+        return $default;
     }
 
     // Methods
