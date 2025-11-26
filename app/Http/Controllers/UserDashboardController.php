@@ -11,6 +11,8 @@ use App\Models\Coupon;
 use App\Models\ClaimedCoupon;
 use App\Services\NotificationService;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
 
 class UserDashboardController extends Controller
 {
@@ -109,6 +111,14 @@ class UserDashboardController extends Controller
                     }
                 ]);
 
+            // Eager load business tags if tables exist
+            if (
+                Schema::hasTable('business_tags') &&
+                Schema::hasTable('business_assign_tags')
+            ) {
+                $query->with('businessTags');
+            }
+
             // Add search functionality if provided
             if ($search) {
                 $query->where(function ($q) use ($search) {
@@ -150,7 +160,7 @@ class UserDashboardController extends Controller
 
             // Format the response
             $formattedBusinesses = $businesses->map(function ($business) {
-                return [
+                $businessData = [
                     'id' => $business->id,
                     'name' => $business->name,
                     'business_name' => $business->business_name,
@@ -191,6 +201,27 @@ class UserDashboardController extends Controller
                         ];
                     }),
                 ];
+
+                // Add business tags if they exist
+                if (
+                    Schema::hasTable('business_tags') &&
+                    Schema::hasTable('business_assign_tags') &&
+                    $business->relationLoaded('businessTags')
+                ) {
+                    $businessData['business_tags'] = $business->businessTags->map(function ($tag) {
+                        return [
+                            'id' => $tag->id,
+                            'name' => $tag->name,
+                            'slug' => $tag->slug,
+                            'icon' => $tag->icon,
+                            'color' => $tag->color,
+                        ];
+                    });
+                } else {
+                    $businessData['business_tags'] = [];
+                }
+
+                return $businessData;
             });
 
             // Calculate pagination info
@@ -233,6 +264,7 @@ class UserDashboardController extends Controller
     {
         try {
             $user = $request->user();
+            $userId = $user ? $user->id : null;
 
             // Validate business exists and is a business user
             $business = User::where('id', $businessId)
@@ -253,9 +285,13 @@ class UserDashboardController extends Controller
             $allBusinessCoupons = Coupon::where('user_id', $businessId)
                 ->where('is_active', true)
                 ->get()
-                ->filter(function ($coupon) use ($user) {
+                ->filter(function ($coupon) use ($userId) {
+                    if (!$userId) {
+                        // If no user, only show available coupons
+                        return $coupon->canBeUsed();
+                    }
                     // Check if current user has claimed this coupon
-                    $userClaimedCoupon = ClaimedCoupon::where('user_id', $user->id)
+                    $userClaimedCoupon = ClaimedCoupon::where('user_id', $userId)
                         ->where('coupon_id', $coupon->id)
                         ->whereIn('status', ['claimed', 'used'])
                         ->exists();
@@ -265,15 +301,20 @@ class UserDashboardController extends Controller
                     // 2. Coupon is still available (not claimed by anyone or within limits)
                     return $userClaimedCoupon || $coupon->canBeUsed();
                 })
-                ->map(function ($coupon) use ($user) {
-                    // Check if current user has already claimed this coupon
-                    $userClaimedCoupon = ClaimedCoupon::where('user_id', $user->id)
-                        ->where('coupon_id', $coupon->id)
-                        ->whereIn('status', ['claimed', 'used'])
-                        ->first();
+                ->map(function ($coupon) use ($userId) {
+                    $isClaimedByUser = false;
+                    $claimedAt = null;
 
-                    $isClaimedByUser = $userClaimedCoupon ? true : false;
-                    $claimedAt = $userClaimedCoupon ? $userClaimedCoupon->created_at : null;
+                    if ($userId) {
+                        // Check if current user has already claimed this coupon
+                        $userClaimedCoupon = ClaimedCoupon::where('user_id', $userId)
+                            ->where('coupon_id', $coupon->id)
+                            ->whereIn('status', ['claimed', 'used'])
+                            ->first();
+
+                        $isClaimedByUser = $userClaimedCoupon ? true : false;
+                        $claimedAt = $userClaimedCoupon ? $userClaimedCoupon->created_at : null;
+                    }
 
                     return [
                         'id' => $coupon->id,
@@ -310,10 +351,14 @@ class UserDashboardController extends Controller
                 ->get();
 
             // Filter coupons to only show those that are available or claimed by current user
-            $products = $products->map(function ($product) use ($user) {
-                $product->coupons = $product->coupons->filter(function ($coupon) use ($user) {
+            $products = $products->map(function ($product) use ($userId) {
+                $product->coupons = $product->coupons->filter(function ($coupon) use ($userId) {
+                    if (!$userId) {
+                        // If no user, only show available coupons
+                        return $coupon->canBeUsed();
+                    }
                     // Check if current user has claimed this coupon
-                    $userClaimedCoupon = ClaimedCoupon::where('user_id', $user->id)
+                    $userClaimedCoupon = ClaimedCoupon::where('user_id', $userId)
                         ->where('coupon_id', $coupon->id)
                         ->whereIn('status', ['claimed', 'used'])
                         ->exists();
@@ -328,9 +373,21 @@ class UserDashboardController extends Controller
             });
 
             // Format products with coupon information
-            $formattedProducts = $products->map(function ($product) use ($user) {
+            $formattedProducts = $products->map(function ($product) use ($user, $userId) {
                 // Check if product is favorited by current user
-                $isFavorite = $user->favoriteProducts()->where('product_id', $product->id)->exists();
+                $isFavorite = false;
+                if ($user && $userId) {
+                    try {
+                        // Check if product_favorites table exists before querying
+                        if (Schema::hasTable('product_favorites')) {
+                            $isFavorite = $user->favoriteProducts()->where('product_id', $product->id)->exists();
+                        }
+                    } catch (\Exception $e) {
+                        // If favoriteProducts relationship doesn't exist or table doesn't exist, default to false
+                        Log::warning('Failed to check favorite status: ' . $e->getMessage());
+                        $isFavorite = false;
+                    }
+                }
 
                 return [
                     'id' => $product->id,
@@ -346,15 +403,20 @@ class UserDashboardController extends Controller
                         'icon' => $product->category->icon,
                         'color' => $product->category->color,
                     ] : null,
-                    'coupons' => $product->coupons->map(function ($coupon) use ($user, $product) {
-                        // Check if current user has already claimed this coupon
-                        $userClaimedCoupon = ClaimedCoupon::where('user_id', $user->id)
-                            ->where('coupon_id', $coupon->id)
-                            ->whereIn('status', ['claimed', 'used'])
-                            ->first();
+                    'coupons' => $product->coupons->map(function ($coupon) use ($userId, $product) {
+                        $isClaimedByUser = false;
+                        $claimedAt = null;
 
-                        $isClaimedByUser = $userClaimedCoupon ? true : false;
-                        $claimedAt = $userClaimedCoupon ? $userClaimedCoupon->created_at : null;
+                        if ($userId) {
+                            // Check if current user has already claimed this coupon
+                            $userClaimedCoupon = ClaimedCoupon::where('user_id', $userId)
+                                ->where('coupon_id', $coupon->id)
+                                ->whereIn('status', ['claimed', 'used'])
+                                ->first();
+
+                            $isClaimedByUser = $userClaimedCoupon ? true : false;
+                            $claimedAt = $userClaimedCoupon ? $userClaimedCoupon->created_at : null;
+                        }
 
                         return [
                             'id' => $coupon->id,
@@ -424,6 +486,12 @@ class UserDashboardController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            Log::error('Error in businessProducts method', [
+                'business_id' => $businessId,
+                'user_id' => $userId ?? null,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to load business products',
@@ -1373,15 +1441,6 @@ class UserDashboardController extends Controller
 
         if ($productWithCategory && $productWithCategory->category) {
             return $productWithCategory->category->name ?? 'Business';
-        }
-
-        $productWithCategoryName = Product::where('user_id', $business->id)
-            ->whereNotNull('category_name')
-            ->orderBy('created_at')
-            ->first();
-
-        if ($productWithCategoryName && $productWithCategoryName->category_name) {
-            return $productWithCategoryName->category_name;
         }
 
         return 'Business';

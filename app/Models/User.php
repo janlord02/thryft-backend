@@ -263,6 +263,27 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * Get the business tags for the user (business).
+     */
+    public function businessTags()
+    {
+        try {
+            // Check if tables exist before defining relationship
+            if (\Illuminate\Support\Facades\Schema::hasTable('business_tags') && 
+                \Illuminate\Support\Facades\Schema::hasTable('business_assign_tags')) {
+                return $this->belongsToMany(BusinessTag::class, 'business_assign_tags', 'user_id', 'business_tag_id')
+                    ->withTimestamps();
+            }
+        } catch (\Exception $e) {
+            // If schema check fails, return empty relationship
+        }
+        
+        // Return empty relationship if tables don't exist
+        return $this->belongsToMany(BusinessTag::class, 'business_assign_tags', 'user_id', 'business_tag_id')
+            ->whereRaw('1 = 0'); // Always return empty
+    }
+
+    /**
      * Get notification preference for a specific type.
      */
     public function getNotificationPreference(string $type): ?NotificationPreference
