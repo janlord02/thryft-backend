@@ -249,6 +249,59 @@ class UserDashboardController extends Controller
             // Determine business category name
             $businessCategoryName = $this->resolveBusinessCategoryName($business);
 
+            // Get all coupons for this business (including those not assigned to products)
+            $allBusinessCoupons = Coupon::where('user_id', $businessId)
+                ->where('is_active', true)
+                ->get()
+                ->filter(function ($coupon) use ($user) {
+                    // Check if current user has claimed this coupon
+                    $userClaimedCoupon = ClaimedCoupon::where('user_id', $user->id)
+                        ->where('coupon_id', $coupon->id)
+                        ->whereIn('status', ['claimed', 'used'])
+                        ->exists();
+
+                    // Show coupon if:
+                    // 1. User has claimed it, OR
+                    // 2. Coupon is still available (not claimed by anyone or within limits)
+                    return $userClaimedCoupon || $coupon->canBeUsed();
+                })
+                ->map(function ($coupon) use ($user) {
+                    // Check if current user has already claimed this coupon
+                    $userClaimedCoupon = ClaimedCoupon::where('user_id', $user->id)
+                        ->where('coupon_id', $coupon->id)
+                        ->whereIn('status', ['claimed', 'used'])
+                        ->first();
+
+                    $isClaimedByUser = $userClaimedCoupon ? true : false;
+                    $claimedAt = $userClaimedCoupon ? $userClaimedCoupon->created_at : null;
+
+                    return [
+                        'id' => $coupon->id,
+                        'code' => $coupon->code,
+                        'title' => $coupon->title,
+                        'description' => $coupon->description,
+                        'banner_image_url' => $coupon->banner_image_url,
+                        'discount_type' => $coupon->discount_type,
+                        'discount_amount' => $coupon->discount_amount,
+                        'discount_percentage' => $coupon->discount_percentage,
+                        'discount_display' => $coupon->formatted_discount,
+                        'minimum_amount' => $coupon->minimum_amount,
+                        'usage_limit' => $coupon->usage_limit,
+                        'used_count' => $coupon->used_count,
+                        'per_user_limit' => $coupon->per_user_limit,
+                        'starts_at' => $coupon->starts_at,
+                        'expires_at' => $coupon->expires_at,
+                        'is_active' => $coupon->is_active,
+                        'is_valid' => $coupon->is_valid,
+                        'can_be_used' => $coupon->canBeUsed(),
+                        'is_claimed_by_user' => $isClaimedByUser,
+                        'claimed_at' => $claimedAt,
+                        'product_id' => null, // Will be set if attached to a product
+                        'product_name' => null,
+                    ];
+                })
+                ->values();
+
             // Get products with relationships
             $products = Product::with(['category', 'coupons'])
                 ->where('user_id', $businessId)
@@ -293,7 +346,7 @@ class UserDashboardController extends Controller
                         'icon' => $product->category->icon,
                         'color' => $product->category->color,
                     ] : null,
-                    'coupons' => $product->coupons->map(function ($coupon) use ($user) {
+                    'coupons' => $product->coupons->map(function ($coupon) use ($user, $product) {
                         // Check if current user has already claimed this coupon
                         $userClaimedCoupon = ClaimedCoupon::where('user_id', $user->id)
                             ->where('coupon_id', $coupon->id)
@@ -324,6 +377,8 @@ class UserDashboardController extends Controller
                             'can_be_used' => $coupon->canBeUsed(),
                             'is_claimed_by_user' => $isClaimedByUser,
                             'claimed_at' => $claimedAt,
+                            'product_id' => $product->id,
+                            'product_name' => $product->name,
                         ];
                     }),
                     'has_coupons' => $product->coupons->count() > 0,
@@ -354,7 +409,8 @@ class UserDashboardController extends Controller
                         'latitude' => $business->latitude,
                         'longitude' => $business->longitude,
                         'profile_image_url' => $business->profile_image_url,
-                    'category_name' => $businessCategoryName,
+                        'category_name' => $businessCategoryName,
+                        'coupons' => $allBusinessCoupons,
                     ],
                     'products' => [
                         'all' => $allProducts,
@@ -735,8 +791,8 @@ class UserDashboardController extends Controller
             return $this->respondWithCouponValidation($user, $couponCode);
 
         } catch (\Exception $e) {
-                return response()->json([
-                    'status' => 'error',
+            return response()->json([
+                'status' => 'error',
                 'message' => 'Failed to validate coupon',
                 'error' => $e->getMessage(),
             ], 500);
@@ -818,15 +874,15 @@ class UserDashboardController extends Controller
         $claimedCoupons = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
             ->where('coupon_code', $couponCode)
             ->where('business_id', $businessUser->id)
-                ->where('status', 'claimed')
+            ->where('status', 'claimed')
             ->get();
 
         if ($claimedCoupons->isEmpty()) {
-                return response()->json([
-                    'status' => 'error',
+            return response()->json([
+                'status' => 'error',
                 'message' => 'Coupon not found or not claimed for your business. Please ensure you are logged in as the correct business and the coupon code is valid.',
-                ], 404);
-            }
+            ], 404);
+        }
 
         if ($claimedCoupons->count() > 1) {
             $customers = $claimedCoupons->map(function ($coupon) {
@@ -849,34 +905,34 @@ class UserDashboardController extends Controller
 
         $claimedCoupon = $claimedCoupons->first();
 
-            if ($claimedCoupon->is_expired) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Coupon has expired',
-                ], 400);
-            }
-
-            if ($claimedCoupon->status === 'used') {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Coupon has already been used',
-                ], 400);
-            }
-
+        if ($claimedCoupon->is_expired) {
             return response()->json([
-                'status' => 'success',
-                'message' => 'Coupon is valid and ready to use',
-                'coupon' => [
-                    'claimedCouponId' => $claimedCoupon->id,
-                    'couponCode' => $claimedCoupon->coupon_code,
-                    'couponTitle' => $claimedCoupon->coupon_title,
-                    'discountDisplay' => $claimedCoupon->discount_display,
-                    'customerName' => $claimedCoupon->user->name,
-                    'productName' => $claimedCoupon->product ? $claimedCoupon->product->name : 'General Store Discount',
-                    'minimumAmount' => $claimedCoupon->minimum_amount,
-                    'expiresAt' => $claimedCoupon->expires_at,
-                ],
-            ]);
+                'status' => 'error',
+                'message' => 'Coupon has expired',
+            ], 400);
+        }
+
+        if ($claimedCoupon->status === 'used') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Coupon has already been used',
+            ], 400);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Coupon is valid and ready to use',
+            'coupon' => [
+                'claimedCouponId' => $claimedCoupon->id,
+                'couponCode' => $claimedCoupon->coupon_code,
+                'couponTitle' => $claimedCoupon->coupon_title,
+                'discountDisplay' => $claimedCoupon->discount_display,
+                'customerName' => $claimedCoupon->user->name,
+                'productName' => $claimedCoupon->product ? $claimedCoupon->product->name : 'General Store Discount',
+                'minimumAmount' => $claimedCoupon->minimum_amount,
+                'expiresAt' => $claimedCoupon->expires_at,
+            ],
+        ]);
     }
 
     /**
