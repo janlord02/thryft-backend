@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use PragmaRX\Google2FA\Google2FA;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
@@ -22,6 +23,16 @@ class ProfileController extends Controller
     public function show(Request $request): JsonResponse
     {
         $user = $request->user();
+        // Try to load businessTags, but don't fail if table doesn't exist yet
+        try {
+            if (Schema::hasTable('business_tags') && 
+                Schema::hasTable('business_assign_tags')) {
+                $user->load('businessTags');
+            }
+        } catch (\Exception $e) {
+            // Table might not exist yet (migrations not run)
+            // Continue without business tags
+        }
 
         return response()->json([
             'status' => 'success',

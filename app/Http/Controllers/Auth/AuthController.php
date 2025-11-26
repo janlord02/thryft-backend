@@ -16,6 +16,7 @@ use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 class AuthController extends Controller
 {
@@ -693,7 +694,7 @@ class AuthController extends Controller
     /**
      * Update business profile
      */
-    public function updateBusinessProfile(Request $request): JsonResponse
+public function updateBusinessProfile(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'firstname' => 'required|string|max:255',
@@ -708,6 +709,8 @@ class AuthController extends Controller
             'country' => 'required|string|max:255',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
+            'business_tags' => 'nullable|array',
+            'business_tags.*' => 'exists:business_tags,id',
         ]);
 
         if ($validator->fails()) {
@@ -744,11 +747,42 @@ class AuthController extends Controller
             'longitude'
         ]));
 
+        // Sync business tags (only if table exists)
+        if ($request->has('business_tags')) {
+            try {
+                if (Schema::hasTable('business_tags') && 
+                    Schema::hasTable('business_assign_tags')) {
+                    $user->businessTags()->sync($request->business_tags);
+                    
+                    // Update usage counts
+                    \App\Models\BusinessTag::whereIn('id', $request->business_tags)->each(function ($tag) {
+                        $tag->incrementUsage();
+                    });
+                }
+            } catch (\Exception $e) {
+                // Table might not exist yet (migrations not run)
+                // Log error but don't fail the request
+                \Log::warning('Failed to sync business tags (table may not exist): ' . $e->getMessage());
+            }
+        }
+
+        // Try to load businessTags, but don't fail if table doesn't exist yet
+        $freshUser = $user->fresh();
+        try {
+            if (Schema::hasTable('business_tags') && 
+                Schema::hasTable('business_assign_tags')) {
+                $freshUser->load('businessTags');
+            }
+        } catch (\Exception $e) {
+            // Table might not exist yet (migrations not run)
+            // Continue without business tags
+        }
+
         return response()->json([
             'status' => 'success',
             'message' => 'Business profile updated successfully',
             'data' => [
-                'user' => $user->fresh()
+                'user' => $freshUser
             ]
         ]);
     }

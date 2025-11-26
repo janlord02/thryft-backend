@@ -2,6 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schema;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\EmailVerificationController;
@@ -14,6 +15,7 @@ use App\Http\Controllers\Admin\LogsController;
 use App\Http\Controllers\Admin\NotificationController;
 use App\Http\Controllers\Admin\SubscriptionController;
 use App\Http\Controllers\Admin\CategoryController;
+use App\Http\Controllers\Admin\BusinessTagController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\TagController;
 use App\Http\Controllers\CouponController;
@@ -78,10 +80,24 @@ Route::middleware('maintenance')->group(function () {
     // Public categories route
     Route::get('/categories/public', [CategoryController::class, 'public']);
 
+    // Public business tags route
+    Route::get('/business-tags/public', [BusinessTagController::class, 'public']);
+
     // Protected routes
     Route::middleware('auth:sanctum')->group(function () {
         Route::get('/user', function (Request $request) {
-            return $request->user();
+            $user = $request->user();
+            // Try to load businessTags, but don't fail if table doesn't exist yet
+            try {
+                if (Schema::hasTable('business_tags') && 
+                    Schema::hasTable('business_assign_tags')) {
+                    $user->load('businessTags');
+                }
+            } catch (\Exception $e) {
+                // Table might not exist yet (migrations not run)
+                // Continue without business tags
+            }
+            return $user;
         });
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::post('/refresh', [AuthController::class, 'refresh']);
@@ -222,6 +238,17 @@ Route::middleware('maintenance')->group(function () {
                 Route::put('/{category}', [CategoryController::class, 'update']);
                 Route::delete('/{category}', [CategoryController::class, 'destroy']);
                 Route::post('/{category}/toggle-status', [CategoryController::class, 'toggleStatus']);
+            });
+
+            // Business tag management routes
+            Route::prefix('business-tags')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\BusinessTagController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Admin\BusinessTagController::class, 'store']);
+                Route::get('/active', [\App\Http\Controllers\Admin\BusinessTagController::class, 'active']);
+                Route::get('/{businessTag}', [\App\Http\Controllers\Admin\BusinessTagController::class, 'show']);
+                Route::put('/{businessTag}', [\App\Http\Controllers\Admin\BusinessTagController::class, 'update']);
+                Route::delete('/{businessTag}', [\App\Http\Controllers\Admin\BusinessTagController::class, 'destroy']);
+                Route::post('/{businessTag}/toggle-status', [\App\Http\Controllers\Admin\BusinessTagController::class, 'toggleStatus']);
             });
 
             // Promo code management routes
