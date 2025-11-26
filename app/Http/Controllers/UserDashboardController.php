@@ -278,6 +278,20 @@ class UserDashboardController extends Controller
                 ], 404);
             }
 
+            $businessTagsPayload = collect();
+            if (Schema::hasTable('business_tags') && Schema::hasTable('business_assign_tags')) {
+                try {
+                    $businessTagsPayload = $business->businessTags()
+                        ->select(['business_tags.id', 'business_tags.name', 'business_tags.slug', 'business_tags.icon', 'business_tags.color'])
+                        ->get();
+                } catch (\Exception $e) {
+                    Log::warning('Failed to load business tags for businessProducts', [
+                        'business_id' => $businessId,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
             // Determine business category name
             $businessCategoryName = $this->resolveBusinessCategoryName($business);
 
@@ -473,6 +487,15 @@ class UserDashboardController extends Controller
                         'profile_image_url' => $business->profile_image_url,
                         'category_name' => $businessCategoryName,
                         'coupons' => $allBusinessCoupons,
+                        'business_tags' => $businessTagsPayload->map(function ($tag) {
+                            return [
+                                'id' => $tag->id,
+                                'name' => $tag->name,
+                                'slug' => $tag->slug,
+                                'icon' => $tag->icon,
+                                'color' => $tag->color,
+                            ];
+                        })->values(),
                     ],
                     'products' => [
                         'all' => $allProducts,
@@ -1441,6 +1464,17 @@ class UserDashboardController extends Controller
 
         if ($productWithCategory && $productWithCategory->category) {
             return $productWithCategory->category->name ?? 'Business';
+        }
+
+        // Try to get category name from products through the relationship
+        $productWithCategoryName = Product::with('category')
+            ->where('user_id', $business->id)
+            ->whereHas('category')
+            ->orderBy('created_at')
+            ->first();
+
+        if ($productWithCategoryName && $productWithCategoryName->category) {
+            return $productWithCategoryName->category->name ?? 'Business';
         }
 
         return 'Business';
