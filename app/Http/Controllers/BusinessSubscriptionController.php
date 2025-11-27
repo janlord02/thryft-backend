@@ -101,6 +101,7 @@ class BusinessSubscriptionController extends Controller
                 'starts_at' => $subscription->starts_at,
                 'ends_at' => $subscription->ends_at,
                 'next_billing_date' => $subscription->ends_at,
+                'remaining_days' => $subscription->getRemainingDays(),
                 'features' => $subscription->subscription->features,
             ],
         ]);
