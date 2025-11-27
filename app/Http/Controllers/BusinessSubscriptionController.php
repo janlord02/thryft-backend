@@ -314,14 +314,24 @@ class BusinessSubscriptionController extends Controller
             ->where('status', 'active')
             ->first();
 
-        // If user has an active subscription and it's not the free plan, allow switching
+        // If user has an active subscription
         if ($existingActive) {
-            // If they're already on the free plan, don't allow claiming again
+            // If they're already on the free plan, just return success (no need to create duplicate)
             if ($existingActive->subscription_id === $freePlan->id) {
+                // Update the expiry date if needed (in case the free plan expiry date changed)
+                $absoluteExpiry = data_get($freePlan->metadata, 'expires_at');
+                if ($absoluteExpiry) {
+                    $targetEndsAt = Carbon::parse($absoluteExpiry)->endOfDay();
+                    if (!$existingActive->ends_at || $existingActive->ends_at->ne($targetEndsAt)) {
+                        $existingActive->update(['ends_at' => $targetEndsAt]);
+                    }
+                }
+
                 return response()->json([
-                    'status' => 'error',
+                    'status' => 'success',
                     'message' => 'You are already on the free plan',
-                ], 400);
+                    'data' => $existingActive->fresh()->load('subscription'),
+                ]);
             }
 
             // Cancel existing subscription to allow switching to free plan
