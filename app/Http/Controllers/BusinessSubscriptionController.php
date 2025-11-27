@@ -329,7 +329,7 @@ class BusinessSubscriptionController extends Controller
 
         $startsAt = now();
         // Always end Free subscriptions on Dec 1, 2025
-        $endsAt = Carbon::parse('2025-12-01')->endOfDay();
+        $endsAt = Carbon::parse('2025-12-27')->endOfDay();
 
         $userSubscription = UserSubscription::create([
             'user_id' => $user->id,
