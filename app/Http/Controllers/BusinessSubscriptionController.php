@@ -291,15 +291,21 @@ class BusinessSubscriptionController extends Controller
     {
         $user = Auth::user();
 
-        // Find active free plan
-        $freePlan = Subscription::whereRaw('LOWER(name) = ?', ['free'])
+        // Find active free plan - check by name or by price = 0 and billing_cycle = 'free'
+        $freePlan = Subscription::where(function ($query) {
+            $query->whereRaw('LOWER(name) = ?', ['free'])
+                ->orWhere(function ($q) {
+                    $q->where('price', 0)
+                        ->where('billing_cycle', 'free');
+                });
+        })
             ->where('status', true)
             ->first();
 
         if (!$freePlan) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'Free plan is not available',
+                'message' => 'Free plan is not available. Please contact support.',
             ], 404);
         }
 
@@ -308,23 +314,34 @@ class BusinessSubscriptionController extends Controller
             ->where('status', 'active')
             ->first();
 
+        // If user has an active subscription and it's not the free plan, allow switching
         if ($existingActive) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'You already have an active subscription',
-            ], 400);
-        }
+            // If they're already on the free plan, don't allow claiming again
+            if ($existingActive->subscription_id === $freePlan->id) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'You are already on the free plan',
+                ], 400);
+            }
 
-        // Check if user has ever claimed free plan before (one-time)
-        $claimedFreeBefore = UserSubscription::where('user_id', $user->id)
-            ->where('subscription_id', $freePlan->id)
-            ->exists();
+            // Cancel existing subscription to allow switching to free plan
+            $existingActive->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+            ]);
+        } else {
+            // Only check if they've claimed free before if they don't have an active subscription
+            // (i.e., this is a first-time claim, not a plan change)
+            $claimedFreeBefore = UserSubscription::where('user_id', $user->id)
+                ->where('subscription_id', $freePlan->id)
+                ->exists();
 
-        if ($claimedFreeBefore) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Free plan can only be claimed once',
-            ], 400);
+            if ($claimedFreeBefore) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Free plan can only be claimed once. You can switch to it from a paid plan.',
+                ], 400);
+            }
         }
 
         $startsAt = now();
