@@ -51,6 +51,7 @@ Route::middleware('maintenance')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/register-business', [AuthController::class, 'registerBusiness']);
     Route::post('/forgot-password', [PasswordResetController::class, 'forgotPassword']);
+    Route::post('/validate-reset-token', [PasswordResetController::class, 'validateToken']);
     Route::post('/reset-password', [PasswordResetController::class, 'resetPassword']);
     Route::post('/verify-email', [EmailVerificationController::class, 'verify']);
     Route::post('/resend-verification', [EmailVerificationController::class, 'resend']);
