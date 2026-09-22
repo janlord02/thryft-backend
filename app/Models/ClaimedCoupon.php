@@ -25,6 +25,7 @@ class ClaimedCoupon extends Model
         'expires_at',
         'status',
         'used_at',
+        'redeemed_by_user_id',
         'usage_notes',
     ];
 
@@ -108,14 +109,18 @@ class ClaimedCoupon extends Model
     }
 
     // Methods
-    public function markAsUsed($notes = null)
-    {
-        $this->update([
-            'status' => 'used',
-            'used_at' => now(),
-            'usage_notes' => $notes,
-        ]);
-    }
+
+    /**
+     * Intentionally removed: markAsUsed() issued an unconditional UPDATE with no
+     * status guard, so two concurrent redemptions both "succeeded" and the
+     * coupon counter was never touched.
+     *
+     * Redemption now goes through UserDashboardController::markAsUsed(), which
+     * performs the transition as a conditional UPDATE inside a transaction
+     * paired with the coupon's redeemed_count increment. Reintroducing a plain
+     * setter here would reopen the double-redemption hole, so it is left out
+     * rather than deprecated.
+     */
 
     public function markAsExpired()
     {

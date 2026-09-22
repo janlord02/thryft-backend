@@ -349,7 +349,7 @@ class CouponController extends Controller
             ], 404);
         }
 
-        if (!$coupon->canBeUsed()) {
+        if (!$coupon->canBeRedeemed()) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Coupon usage limit reached',
@@ -388,19 +388,25 @@ class CouponController extends Controller
             ], 404);
         }
 
-        if (!$coupon->canBeUsed()) {
+        if (!$coupon->canBeRedeemed()) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Coupon usage limit reached',
             ], 400);
         }
 
-        $coupon->incrementUsage();
+        // Atomic: the advisory check above can go stale between read and write.
+        if (!$coupon->tryIncrementRedeemCount()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Coupon usage limit reached',
+            ], 409);
+        }
 
         return response()->json([
             'status' => 'success',
             'message' => 'Coupon redeemed successfully',
-            'data' => $coupon->load('products'),
+            'data' => $coupon->fresh()->load('products'),
         ]);
     }
 }
