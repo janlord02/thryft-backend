@@ -7,6 +7,7 @@ use Illuminate\Foundation\Support\Providers\RouteServiceProvider as ServiceProvi
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Str;
 
 class RouteServiceProvider extends ServiceProvider
 {
@@ -27,6 +28,23 @@ class RouteServiceProvider extends ServiceProvider
         RateLimiter::for('api', function (Request $request) {
             return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
         });
+
+        // Auth endpoints are unauthenticated, so key on submitted email + source IP.
+        // Keying on IP alone lets one NAT'd office lock out its own staff; keying on
+        // email alone lets an attacker lock a known account out from anywhere.
+        $byEmailAndIp = fn (Request $request) => Str::lower((string) $request->input('email')) . '|' . $request->ip();
+
+        RateLimiter::for('login', fn (Request $request) => Limit::perMinute(5)->by($byEmailAndIp($request)));
+
+        RateLimiter::for('two-factor', fn (Request $request) => Limit::perMinute(5)->by($byEmailAndIp($request)));
+
+        // Claim is a write that creates rows; redeem is a counter-hit merchants
+        // fire repeatedly at a busy till, so it gets more headroom.
+        RateLimiter::for('claim', fn (Request $request) => Limit::perMinute(10)->by($request->user()?->id ?: $request->ip()));
+
+        RateLimiter::for('redeem', fn (Request $request) => Limit::perMinute(30)->by($request->user()?->id ?: $request->ip()));
+
+        RateLimiter::for('search', fn (Request $request) => Limit::perMinute(30)->by($request->user()?->id ?: $request->ip()));
 
         $this->routes(function () {
             Route::middleware('api')

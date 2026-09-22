@@ -47,7 +47,7 @@ use App\Http\Controllers\SearchController;
 // Apply maintenance mode middleware to all other routes
 Route::middleware('maintenance')->group(function () {
     // Public routes
-    Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/register-business', [AuthController::class, 'registerBusiness']);
     Route::post('/forgot-password', [PasswordResetController::class, 'forgotPassword']);
@@ -57,20 +57,8 @@ Route::middleware('maintenance')->group(function () {
     Route::post('/resend-verification', [EmailVerificationController::class, 'resend']);
 
     // 2FA verification routes (public - no auth required)
-    Route::post('/2fa/verify', [AuthController::class, 'verifyTwoFactor']);
-    Route::post('/2fa/resend', [AuthController::class, 'resendTwoFactorCode']);
-
-    // Test endpoint to verify cache is working
-    Route::get('/2fa/test-cache', function () {
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Cache system is working',
-            'data' => [
-                'cache_driver' => config('cache.default'),
-                'timestamp' => now()->timestamp,
-            ]
-        ]);
-    });
+    Route::post('/2fa/verify', [AuthController::class, 'verifyTwoFactor'])->middleware('throttle:two-factor');
+    Route::post('/2fa/resend', [AuthController::class, 'resendTwoFactorCode'])->middleware('throttle:two-factor');
 
     // Public settings route
     Route::get('/settings/public', [SettingsController::class, 'getPublicSettings']);
@@ -90,8 +78,10 @@ Route::middleware('maintenance')->group(function () {
             $user = $request->user();
             // Try to load businessTags, but don't fail if table doesn't exist yet
             try {
-                if (Schema::hasTable('business_tags') && 
-                    Schema::hasTable('business_assign_tags')) {
+                if (
+                    Schema::hasTable('business_tags') &&
+                    Schema::hasTable('business_assign_tags')
+                ) {
                     $user->load('businessTags');
                 }
             } catch (\Exception $e) {
@@ -131,14 +121,14 @@ Route::middleware('maintenance')->group(function () {
         // Nearby businesses route (for all authenticated users)
         Route::get('/nearby-businesses', [UserDashboardController::class, 'nearbyBusinesses']);
         Route::get('/business/{businessId}/products', [UserDashboardController::class, 'businessProducts']);
-        Route::post('/coupons/claim', [UserDashboardController::class, 'claimCoupon']);
+        Route::post('/coupons/claim', [UserDashboardController::class, 'claimCoupon'])->middleware('throttle:claim');
         Route::get('/coupons/claimed', [UserDashboardController::class, 'getClaimedCoupons']);
         Route::post('/coupons/validate-scan', [UserDashboardController::class, 'validateScan']);
         Route::post('/coupons/validate-qr-direct', [UserDashboardController::class, 'validateQRDirect']);
         Route::post('/coupons/validate-manual', [UserDashboardController::class, 'validateManual']);
         Route::post('/coupons/validate-specific', [UserDashboardController::class, 'validateSpecificCustomer']);
         Route::post('/coupons/search-customers', [UserDashboardController::class, 'searchCustomers']);
-        Route::post('/coupons/mark-as-used', [UserDashboardController::class, 'markAsUsed']);
+        Route::post('/coupons/mark-as-used', [UserDashboardController::class, 'markAsUsed'])->middleware('throttle:redeem');
 
         // Product favorites
         Route::post('/products/favorite', [UserDashboardController::class, 'toggleProductFavorite']);
@@ -297,13 +287,19 @@ Route::middleware('maintenance')->group(function () {
                 Route::get('/', [CouponController::class, 'index']);
                 Route::post('/', [CouponController::class, 'store']);
                 Route::get('/products', [CouponController::class, 'getProducts']);
-                Route::get('/{coupon}', [CouponController::class, 'show']);
-                Route::put('/{coupon}', [CouponController::class, 'update']);
-                Route::post('/{coupon}', [CouponController::class, 'update']); // For FormData with _method=PUT
-                Route::delete('/{coupon}', [CouponController::class, 'destroy']);
-                Route::post('/{coupon}/toggle-featured', [CouponController::class, 'toggleFeatured']);
+
+                // Literal paths MUST be registered before the /{coupon} routes below.
+                // Previously these sat underneath POST /{coupon}, so "validate" and
+                // "redeem" were bound as route-model ids and always 404'd.
                 Route::post('/validate', [CouponController::class, 'validate']);
-                Route::post('/redeem', [CouponController::class, 'redeem']);
+                Route::post('/redeem', [CouponController::class, 'redeem'])->middleware('throttle:redeem');
+
+                // whereNumber() keeps any future literal segment from binding as a model.
+                Route::get('/{coupon}', [CouponController::class, 'show'])->whereNumber('coupon');
+                Route::put('/{coupon}', [CouponController::class, 'update'])->whereNumber('coupon');
+                Route::post('/{coupon}', [CouponController::class, 'update'])->whereNumber('coupon'); // For FormData with _method=PUT
+                Route::delete('/{coupon}', [CouponController::class, 'destroy'])->whereNumber('coupon');
+                Route::post('/{coupon}/toggle-featured', [CouponController::class, 'toggleFeatured'])->whereNumber('coupon');
             });
         });
 
@@ -346,28 +342,14 @@ Route::middleware('maintenance')->group(function () {
     });
 
     // Search routes (public)
-    Route::prefix('search')->group(function () {
+    Route::prefix('search')->middleware('throttle:search')->group(function () {
         Route::get('/', [SearchController::class, 'search']);
         Route::get('/suggestions', [SearchController::class, 'suggestions']);
     });
-
-    // Test routes
-    Route::post('/test/mark-coupon-used', [App\Http\Controllers\TestController::class, 'testMarkAsUsed']);
-    Route::get('/test/pusher', [App\Http\Controllers\PusherTestController::class, 'testConnection']);
 });
 
-// Stripe webhook route (outside maintenance middleware)
-Route::post('/stripe/webhook', [BusinessSubscriptionController::class, 'webhook']);
-
-// Broadcasting authentication route
-Route::post('/broadcasting/auth', function (Request $request) {
-    $user = $request->user();
-
-    if (!$user) {
-        return response()->json(['error' => 'Unauthorized'], 401);
-    }
-
-    return response()->json([
-        'auth' => 'Bearer ' . $request->bearerToken(),
-    ]);
-});
+// Stripe webhook route (outside maintenance middleware).
+// Deliberately exempt from throttling: Stripe retries aggressively and a 429
+// would be recorded as a delivery failure.
+Route::post('/stripe/webhook', [BusinessSubscriptionController::class, 'webhook'])
+    ->withoutMiddleware('throttle:api');
