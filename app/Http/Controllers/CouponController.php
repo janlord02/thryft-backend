@@ -332,7 +332,12 @@ class CouponController extends Controller
             'code' => 'required|string',
         ]);
 
+        // Scope to the authenticated business. Without this, any business could
+        // read or redeem another business's coupon by guessing its code. Falling
+        // through to the same 404 as a missing coupon (rather than a 403) keeps
+        // this from doubling as a coupon-code enumeration oracle.
         $coupon = Coupon::where('code', $request->code)
+            ->where('user_id', Auth::id())
             ->active()
             ->valid()
             ->first();
@@ -366,7 +371,12 @@ class CouponController extends Controller
             'code' => 'required|string',
         ]);
 
+        // Scope to the authenticated business. Without this, any business could
+        // read or redeem another business's coupon by guessing its code. Falling
+        // through to the same 404 as a missing coupon (rather than a 403) keeps
+        // this from doubling as a coupon-code enumeration oracle.
         $coupon = Coupon::where('code', $request->code)
+            ->where('user_id', Auth::id())
             ->active()
             ->valid()
             ->first();

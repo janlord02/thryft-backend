@@ -11,6 +11,13 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Applies throttle:api to the "api" middleware group. Routes in
+        // routes/api.php are registered by RouteServiceProvider via
+        // Route::middleware('api'), so they pick this up. Named per-route
+        // limiters (login, two-factor, claim, redeem, search) are defined in
+        // RouteServiceProvider::boot(). Verify with `php artisan route:list`.
+        $middleware->throttleApi();
+
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
             'maintenance' => \App\Http\Middleware\MaintenanceMode::class,

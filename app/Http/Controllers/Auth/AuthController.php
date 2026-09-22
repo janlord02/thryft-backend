@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Exceptions\TwoFactorDeliveryException;
 use App\Models\User;
 use App\Models\Setting;
 use App\Services\ActivityService;
@@ -250,10 +251,10 @@ class AuthController extends Controller
 
             // Check if 2FA is enabled for the user
             if ($user->two_factor_enabled) {
-                // Generate and send 2FA code
-                $code = $this->generateAndSendTwoFactorCode($user);
+                $code = $this->generateTwoFactorCode();
 
-                // Store 2FA data in cache for 2 minutes
+                // Store 2FA data in cache for 2 minutes.
+                // This MUST happen before delivery is attempted — see sendTwoFactorCode().
                 $cacheKey = "2fa_{$user->id}_{$user->email}";
                 $cacheData = [
                     'user_id' => $user->id,
@@ -268,8 +269,10 @@ class AuthController extends Controller
                     'user_id' => $user->id,
                     'email' => $user->email,
                     'cache_key' => $cacheKey,
-                    'cache_data' => $cacheData
                 ]);
+
+                // Throws TwoFactorDeliveryException, caught below as a 503.
+                $this->sendTwoFactorCode($user, $code);
 
                 return response()->json([
                     'status' => 'success',
@@ -313,6 +316,15 @@ class AuthController extends Controller
                     'requires_2fa' => false,
                 ],
             ]);
+        } catch (TwoFactorDeliveryException $e) {
+            // Credentials were correct and the code is cached — only delivery failed.
+            // Must be caught before the generic handler below, which would otherwise
+            // report a mail outage as a login failure.
+            return response()->json([
+                'status' => 'error',
+                'message' => 'We could not send your verification code right now. Please try again in a moment.',
+                'code' => 'two_factor_delivery_failed',
+            ], 503);
         } catch (\Exception $e) {
             Log::error('Login error: ' . $e->getMessage());
             return response()->json([
@@ -498,10 +510,10 @@ class AuthController extends Controller
                 ], 401);
             }
 
-            // Generate and send new 2FA code
-            $code = $this->generateAndSendTwoFactorCode($user);
+            $code = $this->generateTwoFactorCode();
 
-            // Update cache with new code
+            // Update cache with new code BEFORE attempting delivery, so a mail
+            // outage leaves a usable code rather than invalidating the session.
             $cacheData = [
                 'user_id' => $user->id,
                 'code' => $code,
@@ -510,6 +522,8 @@ class AuthController extends Controller
             ];
 
             Cache::put($cacheKey, $cacheData, 120); // 2 minutes
+
+            $this->sendTwoFactorCode($user, $code);
 
             Log::info('2FA code resent successfully', [
                 'user_id' => $user->id,
@@ -521,6 +535,12 @@ class AuthController extends Controller
                 'status' => 'success',
                 'message' => '2FA code resent successfully',
             ]);
+        } catch (TwoFactorDeliveryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'We could not send your verification code right now. Please try again in a moment.',
+                'code' => 'two_factor_delivery_failed',
+            ], 503);
         } catch (\Exception $e) {
             Log::error('Resend 2FA code error: ' . $e->getMessage());
             return response()->json([
@@ -531,17 +551,40 @@ class AuthController extends Controller
     }
 
     /**
-     * Generate and send 2FA code
+     * Generate a 6-digit 2FA code.
+     *
+     * Deliberately separate from delivery so callers can persist the code to
+     * the cache BEFORE attempting to send it. When these were fused, an SMTP
+     * failure threw before Cache::put ever ran, so no code existed and the
+     * user was locked out entirely rather than merely undelivered.
      */
-    private function generateAndSendTwoFactorCode(User $user): string
+    private function generateTwoFactorCode(): string
     {
-        // Generate 6-digit code
-        $code = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        return str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    }
 
-        // Send email with code
-        Mail::to($user->email)->send(new TwoFactorCodeMail($code, $user->name));
+    /**
+     * Deliver a previously-cached 2FA code by email.
+     *
+     * Sent synchronously on purpose: queueing this is the right end state, but
+     * no queue worker runs in production yet, so ShouldQueue would silently
+     * drop every code. Revisit once supervisor is running queue:work.
+     *
+     * @throws TwoFactorDeliveryException
+     */
+    private function sendTwoFactorCode(User $user, string $code): void
+    {
+        try {
+            Mail::to($user->email)->send(new TwoFactorCodeMail($code, $user->name));
+        } catch (\Throwable $e) {
+            Log::error('2FA code delivery failed', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'error' => $e->getMessage(),
+            ]);
 
-        return $code;
+            throw new TwoFactorDeliveryException('Unable to deliver the two-factor code.', 0, $e);
+        }
     }
 
     /**
