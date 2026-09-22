@@ -67,7 +67,7 @@ class PasswordResetController extends Controller
         }
 
         $user = User::where('email', $request->email)->first();
-        
+
         if (!$user) {
             return response()->json([
                 'status' => 'error',
@@ -114,7 +114,7 @@ class PasswordResetController extends Controller
         // Check if token is expired (default is 60 minutes)
         $tokenAge = now()->diffInMinutes(\Carbon\Carbon::parse($tokenRecord->created_at));
         $expirationMinutes = config('auth.passwords.users.expire', 60);
-        
+
         if ($tokenAge > $expirationMinutes) {
             return response()->json([
                 'status' => 'error',
@@ -181,11 +181,11 @@ class PasswordResetController extends Controller
             $tokenRecord = \DB::table('password_reset_tokens')
                 ->where('email', $request->email)
                 ->first();
-            
+
             if ($tokenRecord) {
                 $tokenAge = now()->diffInMinutes($tokenRecord->created_at);
                 $expirationMinutes = config('auth.passwords.users.expire', 60);
-                
+
                 if ($tokenAge > $expirationMinutes) {
                     return response()->json([
                         'status' => 'error',
