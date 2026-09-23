@@ -22,6 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => \App\Http\Middleware\RoleMiddleware::class,
             'maintenance' => \App\Http\Middleware\MaintenanceMode::class,
             'api.session' => \App\Http\Middleware\EnsureApiSession::class,
+            'subscribed' => \App\Http\Middleware\EnsureActiveSubscription::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

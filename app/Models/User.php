@@ -254,6 +254,33 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * Get the user's subscription grants.
+     */
+    public function userSubscriptions(): HasMany
+    {
+        return $this->hasMany(UserSubscription::class);
+    }
+
+    /**
+     * The subscription currently entitling this user to business features, if
+     * any. Includes a past_due subscription still inside its grace period —
+     * see UserSubscription::grantsAccess().
+     */
+    public function activeSubscription(): ?UserSubscription
+    {
+        return $this->userSubscriptions()
+            ->grantingAccess()
+            ->with('subscription')
+            ->latest('starts_at')
+            ->first();
+    }
+
+    public function hasActiveSubscription(): bool
+    {
+        return $this->activeSubscription() !== null;
+    }
+
+    /**
      * Get the products that the user has favorited.
      */
     public function favoriteProducts()

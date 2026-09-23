@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\Category;
 use App\Models\Tag;
+use App\Services\PlanLimits;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -64,6 +65,16 @@ class ProductController extends Controller
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'sort_order' => 'nullable|integer|min:0',
         ]);
+
+        // Plan quotas come from Subscription.metadata.max_products, which the
+        // seeder has always written but nothing read until now.
+        if (!app(PlanLimits::class)->canCreateProduct(Auth::user())) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You have reached the product limit for your plan. Upgrade to add more.',
+                'code' => 'plan_limit_reached',
+            ], 402);
+        }
 
         return DB::transaction(function () use ($request) {
             $data = [
