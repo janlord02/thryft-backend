@@ -11,6 +11,7 @@ use App\Models\Product;
 use App\Models\Coupon;
 use App\Models\ClaimedCoupon;
 use App\Services\NotificationService;
+use App\Support\DatabaseErrors;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -593,7 +594,7 @@ class UserDashboardController extends Controller
                 } catch (QueryException $e) {
                     // claimed_coupons_user_coupon_unique. This is the race
                     // backstop for two simultaneous claims by the same user.
-                    if ($this->isUniqueViolation($e)) {
+                    if (DatabaseErrors::isUniqueViolation($e)) {
                         throw CouponConflictException::alreadyClaimed();
                     }
 
@@ -653,17 +654,6 @@ class UserDashboardController extends Controller
         return Product::where('id', $productId)
             ->where('user_id', $coupon->user_id)
             ->exists();
-    }
-
-    /**
-     * SQLSTATE 23000 covers every integrity violation, so also confirm the
-     * driver message names a unique constraint. MySQL reports "Duplicate entry
-     * ... for key '..._unique'"; SQLite reports "UNIQUE constraint failed".
-     */
-    private function isUniqueViolation(QueryException $e): bool
-    {
-        return $e->getCode() === '23000'
-            && stripos($e->getMessage(), 'unique') !== false;
     }
 
     /**

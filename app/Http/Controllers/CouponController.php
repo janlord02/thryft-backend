@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Coupon;
 use App\Models\Product;
+use App\Services\PlanLimits;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -75,6 +76,16 @@ class CouponController extends Controller
             'product_ids.*' => 'integer|exists:products,id',
             'terms_conditions' => 'nullable|array',
         ]);
+
+        // Plan quotas come from Subscription.metadata.max_coupons, which the
+        // seeder has always written but nothing read until now.
+        if (!app(PlanLimits::class)->canCreateCoupon(Auth::user())) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You have reached the coupon limit for your plan. Upgrade to add more.',
+                'code' => 'plan_limit_reached',
+            ], 402);
+        }
 
         return DB::transaction(function () use ($request) {
             // Handle banner image upload

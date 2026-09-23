@@ -260,8 +260,10 @@ Route::middleware('maintenance')->group(function () {
             });
         });
 
-        // Business routes - Business users only
-        Route::middleware('role:business')->group(function () {
+        // Business routes - Business users only.
+        // 'subscribed' is the server-side paywall: before it, access came purely
+        // from users.role === 'business', which nothing ever revoked.
+        Route::middleware(['role:business', 'subscribed'])->group(function () {
             // Product management routes
             Route::prefix('products')->group(function () {
                 Route::get('/', [ProductController::class, 'index']);
