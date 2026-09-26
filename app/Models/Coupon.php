@@ -16,6 +16,10 @@ class Coupon extends Model
 
     protected $fillable = [
         'user_id',
+        // Dual-written alongside user_id during the business extraction; see
+        // App\Support\BusinessResolver.
+        'business_id',
+        'location_id',
         'title',
         'code',
         'description',
@@ -79,6 +83,16 @@ class Coupon extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function business(): BelongsTo
+    {
+        return $this->belongsTo(Business::class);
+    }
+
+    public function location(): BelongsTo
+    {
+        return $this->belongsTo(BusinessLocation::class, 'location_id');
     }
 
     public function products(): BelongsToMany

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Coupon;
 use App\Models\Product;
 use App\Services\PlanLimits;
+use App\Support\BusinessResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -18,8 +19,8 @@ class CouponController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Coupon::with(['user', 'products'])
-            ->byUser(Auth::id());
+        $query = Coupon::with(['user', 'products']);
+        BusinessResolver::scopeOwnedBy($query, Auth::user());
 
         // Apply filters
         if ($request->has('search') && $request->search) {
@@ -106,7 +107,8 @@ class CouponController extends Controller
             }
 
             $coupon = Coupon::create([
-                'user_id' => Auth::id(),
+                // Dual-writes user_id and business_id; see BusinessResolver.
+                ...BusinessResolver::ownershipAttributes(Auth::user()),
                 'title' => $request->title,
                 'code' => $request->code ?: strtoupper(Str::random(8)),
                 'description' => $request->description,
@@ -148,7 +150,7 @@ class CouponController extends Controller
     public function show(Coupon $coupon)
     {
         // Ensure user can only view their own coupons
-        if ($coupon->user_id !== Auth::id()) {
+        if (!BusinessResolver::owns(Auth::user(), $coupon)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Coupon not found',
@@ -167,7 +169,7 @@ class CouponController extends Controller
     public function update(Request $request, Coupon $coupon)
     {
         // Ensure user can only update their own coupons
-        if ($coupon->user_id !== Auth::id()) {
+        if (!BusinessResolver::owns(Auth::user(), $coupon)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Coupon not found',
@@ -273,7 +275,7 @@ class CouponController extends Controller
     public function destroy(Coupon $coupon)
     {
         // Ensure user can only delete their own coupons
-        if ($coupon->user_id !== Auth::id()) {
+        if (!BusinessResolver::owns(Auth::user(), $coupon)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Coupon not found',
@@ -301,7 +303,7 @@ class CouponController extends Controller
     public function toggleFeatured(Coupon $coupon)
     {
         // Ensure user can only modify their own coupons
-        if ($coupon->user_id !== Auth::id()) {
+        if (!BusinessResolver::owns(Auth::user(), $coupon)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Coupon not found',
@@ -322,11 +324,10 @@ class CouponController extends Controller
      */
     public function getProducts()
     {
-        $products = Product::active()
-            ->byUser(Auth::id())
-            ->with(['category', 'tags'])
-            ->orderBy('name')
-            ->get();
+        $query = Product::active()->with(['category', 'tags']);
+        BusinessResolver::scopeOwnedBy($query, Auth::user());
+
+        $products = $query->orderBy('name')->get();
 
         return response()->json([
             'status' => 'success',
@@ -347,11 +348,10 @@ class CouponController extends Controller
         // read or redeem another business's coupon by guessing its code. Falling
         // through to the same 404 as a missing coupon (rather than a 403) keeps
         // this from doubling as a coupon-code enumeration oracle.
-        $coupon = Coupon::where('code', $request->code)
-            ->where('user_id', Auth::id())
-            ->active()
-            ->valid()
-            ->first();
+        $query = Coupon::where('code', $request->code)->active()->valid();
+        BusinessResolver::scopeOwnedBy($query, Auth::user());
+
+        $coupon = $query->first();
 
         if (!$coupon) {
             return response()->json([
@@ -386,11 +386,10 @@ class CouponController extends Controller
         // read or redeem another business's coupon by guessing its code. Falling
         // through to the same 404 as a missing coupon (rather than a 403) keeps
         // this from doubling as a coupon-code enumeration oracle.
-        $coupon = Coupon::where('code', $request->code)
-            ->where('user_id', Auth::id())
-            ->active()
-            ->valid()
-            ->first();
+        $query = Coupon::where('code', $request->code)->active()->valid();
+        BusinessResolver::scopeOwnedBy($query, Auth::user());
+
+        $coupon = $query->first();
 
         if (!$coupon) {
             return response()->json([
