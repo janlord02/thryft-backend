@@ -254,6 +254,26 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * Businesses this user owns.
+     *
+     * A hasMany rather than a hasOne from the outset: ownership becomes
+     * many-to-many through business_members in Phase 3b, and callers written
+     * against a collection will not need rewriting then.
+     */
+    public function businesses(): HasMany
+    {
+        return $this->hasMany(Business::class, 'owner_user_id');
+    }
+
+    /**
+     * The business this user is currently acting as.
+     */
+    public function currentBusiness(): ?Business
+    {
+        return \App\Support\BusinessResolver::forUser($this);
+    }
+
+    /**
      * Get the user's subscription grants.
      */
     public function userSubscriptions(): HasMany
