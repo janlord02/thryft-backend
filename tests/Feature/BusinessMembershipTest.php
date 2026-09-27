@@ -54,11 +54,9 @@ class BusinessMembershipTest extends TestCase
             'user_id' => $user->id,
         ]);
 
-        // The subscription gate is keyed on the acting user, so a staff member
-        // needs one to reach the ability check at all. Phase 3b leaves that
-        // asymmetry in place; see the note in the commit message.
-        UserSubscription::factory()->create(['user_id' => $user->id]);
-
+        // Deliberately NO subscription of their own: entitlement belongs to the
+        // business they work for. Requiring staff to buy their own plan would
+        // make staff accounts unusable.
         return $user;
     }
 
@@ -118,13 +116,38 @@ class BusinessMembershipTest extends TestCase
     {
         [$business] = $this->paidBusiness();
         $pending = User::factory()->create();
-        UserSubscription::factory()->create(['user_id' => $pending->id]);
         BusinessMember::factory()->manager()->invited()->create([
             'business_id' => $business->id,
             'user_id' => $pending->id,
         ]);
 
         $this->actingAs($pending, 'sanctum')->getJson('/api/coupons')->assertStatus(403);
+    }
+
+    public function test_staff_need_no_subscription_of_their_own()
+    {
+        [$business] = $this->paidBusiness();
+        $manager = $this->memberOf($business, 'manager');
+
+        $this->assertNull($manager->activeSubscription(), 'precondition: the member holds no plan');
+        $this->assertTrue($business->hasActiveSubscription());
+
+        // Entitlement belongs to the business. The gate originally checked the
+        // acting user, which meant every employee had to buy their own plan.
+        $this->actingAs($manager, 'sanctum')->getJson('/api/coupons')->assertStatus(200);
+    }
+
+    public function test_whole_team_is_blocked_when_the_business_stops_paying()
+    {
+        [$business, $owner] = $this->paidBusiness();
+        $manager = $this->memberOf($business, 'manager');
+
+        UserSubscription::where('user_id', $owner->id)->update(['status' => 'cancelled']);
+
+        $this->actingAs($manager, 'sanctum')
+            ->getJson('/api/coupons')
+            ->assertStatus(402)
+            ->assertJsonPath('code', 'subscription_required');
     }
 
     public function test_stranger_has_no_business_context()
@@ -157,7 +180,6 @@ class BusinessMembershipTest extends TestCase
         [$second] = $this->paidBusiness();
 
         $user = User::factory()->create();
-        UserSubscription::factory()->create(['user_id' => $user->id]);
 
         foreach ([$first, $second] as $business) {
             BusinessMember::factory()->manager()->create([

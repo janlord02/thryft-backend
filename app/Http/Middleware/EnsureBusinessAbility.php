@@ -61,7 +61,11 @@ class EnsureBusinessAbility
 
         // Payment before permission: a member of an unpaid business should be
         // told the business is unpaid, not that they lack a permission.
-        if ($user->role !== 'super-admin' && !$user->hasActiveSubscription()) {
+        //
+        // Entitlement is checked against the BUSINESS. Checking the acting
+        // user's own subscription would require every staff member to buy
+        // their own plan before they could work a till.
+        if ($user->role !== 'super-admin' && !$this->isPaidUp($business, $user)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'An active subscription is required to use business features.',
@@ -81,6 +85,19 @@ class EnsureBusinessAbility
         $request->attributes->set('business', $business);
 
         return $next($request);
+    }
+
+    /**
+     * A resolved business pays for itself. The legacy path (role === 'business'
+     * with no business record yet) has no business to ask, so it falls back to
+     * the user's own subscription — which is where it lived before the
+     * extraction.
+     */
+    private function isPaidUp($business, $user): bool
+    {
+        return $business
+            ? $business->hasActiveSubscription()
+            : $user->hasActiveSubscription();
     }
 
     private function allows($user, string $ability, $business): bool
