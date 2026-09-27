@@ -23,6 +23,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'maintenance' => \App\Http\Middleware\MaintenanceMode::class,
             'api.session' => \App\Http\Middleware\EnsureApiSession::class,
             'subscribed' => \App\Http\Middleware\EnsureActiveSubscription::class,
+            // Supersedes ['role:business', 'subscribed'] — resolves the business,
+            // checks the subscription, then checks the ability.
+            'business' => \App\Http\Middleware\EnsureBusinessAbility::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
