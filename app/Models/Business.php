@@ -82,6 +82,23 @@ class Business extends Model
         return $query->where('status', 'active');
     }
 
+    /**
+     * Is this business paid up?
+     *
+     * Entitlement belongs to the BUSINESS, not to whoever happens to be making
+     * the request. Checking the acting user's own subscription — as the gate
+     * originally did — meant a staff member needed to buy their own plan
+     * before they could work a till, which makes staff accounts unusable.
+     *
+     * Subscriptions currently hang off the owner's user record, so that is
+     * where this looks. When they move onto businesses directly, only this
+     * method changes.
+     */
+    public function hasActiveSubscription(): bool
+    {
+        return $this->owner?->hasActiveSubscription() ?? false;
+    }
+
     public function getRouteKeyName(): string
     {
         return 'slug';

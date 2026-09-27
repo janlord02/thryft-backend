@@ -24,6 +24,7 @@ use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\NotificationController as UserNotificationController;
 use App\Http\Controllers\BusinessSubscriptionController;
 use App\Http\Controllers\SearchController;
+use App\Http\Controllers\BusinessDashboardController;
 use App\Http\Controllers\Public\GuestBrowseController;
 
 /*
@@ -285,6 +286,14 @@ Route::middleware('maintenance')->group(function () {
         // declares the ability it actually needs, so a 'staff' member can
         // redeem at the till without being able to edit what is on offer.
         Route::middleware('business')->group(function () {
+            // Merchant dashboard. Separate ability from manage_offers so a
+            // manager can see the numbers without being able to edit billing,
+            // and so analytics can later be withheld on cheaper plans.
+            Route::prefix('business/dashboard')->middleware('business:business.view_analytics')->group(function () {
+                Route::get('/analytics', [BusinessDashboardController::class, 'analytics']);
+                Route::get('/onboarding', [BusinessDashboardController::class, 'onboarding']);
+            });
+
             // Product management routes
             Route::prefix('products')->middleware('business:business.manage_offers')->group(function () {
                 Route::get('/', [ProductController::class, 'index']);
