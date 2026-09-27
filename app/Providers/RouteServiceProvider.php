@@ -46,6 +46,11 @@ class RouteServiceProvider extends ServiceProvider
 
         RateLimiter::for('search', fn (Request $request) => Limit::perMinute(30)->by($request->user()?->id ?: $request->ip()));
 
+        // Guest browsing is unauthenticated, so it can only be keyed on IP and
+        // is the obvious scraping target. Generous enough for real browsing,
+        // tight enough that enumerating the whole catalogue is slow.
+        RateLimiter::for('public', fn (Request $request) => Limit::perMinute(60)->by($request->ip()));
+
         $this->routes(function () {
             Route::middleware('api')
                 ->prefix('api')
@@ -53,6 +58,13 @@ class RouteServiceProvider extends ServiceProvider
 
             Route::middleware('web')
                 ->group(base_path('routes/web.php'));
+
+            // Crawlable public pages, served from the apex domain. Kept in
+            // their own file because they are the only unauthenticated,
+            // server-rendered surface and their routing rules differ from both
+            // the API and the app's web routes.
+            Route::middleware('web')
+                ->group(base_path('routes/public.php'));
         });
     }
 }

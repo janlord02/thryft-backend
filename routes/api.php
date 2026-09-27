@@ -24,6 +24,7 @@ use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\NotificationController as UserNotificationController;
 use App\Http\Controllers\BusinessSubscriptionController;
 use App\Http\Controllers\SearchController;
+use App\Http\Controllers\Public\GuestBrowseController;
 
 /*
 |--------------------------------------------------------------------------
@@ -71,6 +72,18 @@ Route::middleware('maintenance')->group(function () {
 
     // Public business tags route
     Route::get('/business-tags/public', [BusinessTagController::class, 'public']);
+
+    // Guest mode: browse businesses and deals without an account.
+    // Read-only; anything tied to identity (claiming, favouriting, redeeming)
+    // stays behind auth:sanctum below. Its own throttle tier because it is
+    // unauthenticated and therefore keyed on IP, and is the surface a scraper
+    // would target.
+    Route::prefix('public')->middleware('throttle:public')->group(function () {
+        Route::get('/businesses', [GuestBrowseController::class, 'businesses']);
+        Route::get('/businesses/{business}', [GuestBrowseController::class, 'business']);
+        Route::get('/deals', [GuestBrowseController::class, 'deals']);
+        Route::get('/businesses/{business}/deals/{couponSlug}', [GuestBrowseController::class, 'deal']);
+    });
 
     // Protected routes
     Route::middleware('auth:sanctum')->group(function () {
