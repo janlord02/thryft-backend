@@ -260,12 +260,20 @@ Route::middleware('maintenance')->group(function () {
             });
         });
 
-        // Business routes - Business users only.
-        // 'subscribed' is the server-side paywall: before it, access came purely
-        // from users.role === 'business', which nothing ever revoked.
-        Route::middleware(['role:business', 'subscribed'])->group(function () {
+        // Business routes.
+        //
+        // 'business:<ability>' resolves which business the request acts for,
+        // confirms it is paid up, then confirms the caller holds the ability.
+        // It supersedes ['role:business', 'subscribed']: role is no longer the
+        // thing that grants access, membership is — which is what allows staff
+        // accounts without sharing the owner's login.
+        //
+        // The group requires only business context; each prefix below then
+        // declares the ability it actually needs, so a 'staff' member can
+        // redeem at the till without being able to edit what is on offer.
+        Route::middleware('business')->group(function () {
             // Product management routes
-            Route::prefix('products')->group(function () {
+            Route::prefix('products')->middleware('business:business.manage_offers')->group(function () {
                 Route::get('/', [ProductController::class, 'index']);
                 Route::post('/', [ProductController::class, 'store']);
                 Route::get('/categories', [ProductController::class, 'getCategories']);
@@ -277,7 +285,7 @@ Route::middleware('maintenance')->group(function () {
             });
 
             // Tag management routes
-            Route::prefix('tags')->group(function () {
+            Route::prefix('tags')->middleware('business:business.manage_offers')->group(function () {
                 Route::get('/search', [TagController::class, 'search']);
                 Route::get('/popular', [TagController::class, 'popular']);
                 Route::post('/', [TagController::class, 'store']);
@@ -286,22 +294,32 @@ Route::middleware('maintenance')->group(function () {
 
             // Coupon management routes
             Route::prefix('coupons')->group(function () {
-                Route::get('/', [CouponController::class, 'index']);
-                Route::post('/', [CouponController::class, 'store']);
-                Route::get('/products', [CouponController::class, 'getProducts']);
+                // Managing what is on offer.
+                Route::middleware('business:business.manage_offers')->group(function () {
+                    Route::get('/', [CouponController::class, 'index']);
+                    Route::post('/', [CouponController::class, 'store']);
+                    Route::get('/products', [CouponController::class, 'getProducts']);
+                });
 
-                // Literal paths MUST be registered before the /{coupon} routes below.
-                // Previously these sat underneath POST /{coupon}, so "validate" and
-                // "redeem" were bound as route-model ids and always 404'd.
-                Route::post('/validate', [CouponController::class, 'validate']);
-                Route::post('/redeem', [CouponController::class, 'redeem'])->middleware('throttle:redeem');
+                // Honouring a coupon at the till. Separate ability so front-of-
+                // house staff can redeem without being able to edit offers.
+                //
+                // Literal paths MUST stay above the /{coupon} routes below.
+                // Previously these sat underneath POST /{coupon}, so "validate"
+                // and "redeem" were bound as route-model ids and always 404'd.
+                Route::middleware('business:business.redeem')->group(function () {
+                    Route::post('/validate', [CouponController::class, 'validate']);
+                    Route::post('/redeem', [CouponController::class, 'redeem'])->middleware('throttle:redeem');
+                });
 
                 // whereNumber() keeps any future literal segment from binding as a model.
-                Route::get('/{coupon}', [CouponController::class, 'show'])->whereNumber('coupon');
-                Route::put('/{coupon}', [CouponController::class, 'update'])->whereNumber('coupon');
-                Route::post('/{coupon}', [CouponController::class, 'update'])->whereNumber('coupon'); // For FormData with _method=PUT
-                Route::delete('/{coupon}', [CouponController::class, 'destroy'])->whereNumber('coupon');
-                Route::post('/{coupon}/toggle-featured', [CouponController::class, 'toggleFeatured'])->whereNumber('coupon');
+                Route::middleware('business:business.manage_offers')->group(function () {
+                    Route::get('/{coupon}', [CouponController::class, 'show'])->whereNumber('coupon');
+                    Route::put('/{coupon}', [CouponController::class, 'update'])->whereNumber('coupon');
+                    Route::post('/{coupon}', [CouponController::class, 'update'])->whereNumber('coupon'); // For FormData with _method=PUT
+                    Route::delete('/{coupon}', [CouponController::class, 'destroy'])->whereNumber('coupon');
+                    Route::post('/{coupon}/toggle-featured', [CouponController::class, 'toggleFeatured'])->whereNumber('coupon');
+                });
             });
         });
 

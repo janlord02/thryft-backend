@@ -266,11 +266,79 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * Memberships giving this user standing in a business.
+     */
+    public function businessMemberships(): HasMany
+    {
+        return $this->hasMany(BusinessMember::class);
+    }
+
+    /**
+     * Businesses this user may act for, via an active membership.
+     */
+    public function memberBusinesses()
+    {
+        return $this->belongsToMany(Business::class, 'business_members')
+            ->withPivot(['role', 'permissions', 'status'])
+            ->wherePivot('status', 'active')
+            ->withTimestamps();
+    }
+
+    /**
      * The business this user is currently acting as.
      */
     public function currentBusiness(): ?Business
     {
         return \App\Support\BusinessResolver::forUser($this);
+    }
+
+    /**
+     * This user's membership of a given business, if any.
+     */
+    public function membershipFor(Business|int|null $business): ?BusinessMember
+    {
+        $businessId = $business instanceof Business ? $business->id : $business;
+
+        if (!$businessId) {
+            return null;
+        }
+
+        return $this->businessMemberships()
+            ->where('business_id', $businessId)
+            ->active()
+            ->first();
+    }
+
+    /**
+     * Does this user hold an ability for a business?
+     *
+     * Super admins are handled by a Gate::before hook rather than here, so this
+     * stays a pure membership question.
+     *
+     * The legacy fallback matters during the rollout: a user whose role is
+     * still 'business' and who owns the business, but for whom no membership
+     * row exists yet, is treated as its owner. Without it, any account
+     * promoted to business after the backfill would lose access.
+     */
+    public function hasBusinessAbility(string $ability, Business|int|null $business): bool
+    {
+        $membership = $this->membershipFor($business);
+
+        if ($membership) {
+            return $membership->hasAbility($ability);
+        }
+
+        $businessId = $business instanceof Business ? $business->id : $business;
+
+        if ($businessId && $this->role === 'business') {
+            $ownsIt = Business::whereKey($businessId)->where('owner_user_id', $this->id)->exists();
+
+            if ($ownsIt) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

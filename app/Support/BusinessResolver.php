@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Models\Business;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Request;
 
 /**
  * Single place that answers "which business is this request acting as?" and
@@ -28,8 +29,9 @@ class BusinessResolver
     /**
      * The business a user is acting as.
      *
-     * Today a user owns at most one business, created by the backfill with
-     * id === users.id. Phase 3b replaces this with a membership lookup.
+     * Membership is the primary path. Ownership is the fallback, which covers
+     * businesses created before business_members existed and any account
+     * promoted to 'business' after the backfill ran.
      */
     public static function forUser(?User $user): ?Business
     {
@@ -37,7 +39,56 @@ class BusinessResolver
             return null;
         }
 
+        $viaMembership = $user->memberBusinesses()->orderBy('businesses.id')->first();
+
+        if ($viaMembership) {
+            return $viaMembership;
+        }
+
         return Business::where('owner_user_id', $user->id)->first();
+    }
+
+    /**
+     * The business this REQUEST is acting for.
+     *
+     * Resolution order:
+     *   1. an explicit {business} route parameter
+     *   2. an X-Business-Id header
+     *   3. the user's sole business
+     *
+     * Rule 3 is what keeps the existing frontend working unchanged: it sends
+     * neither a route parameter nor a header, and every current user has at
+     * most one business. Rules 1 and 2 exist so a future multi-business UI has
+     * somewhere to say which one it means.
+     *
+     * An explicit choice the user has no standing in resolves to null rather
+     * than silently falling back to their own business — otherwise passing
+     * someone else's id would quietly operate on your own records.
+     */
+    public static function forRequest(Request $request, ?User $user): ?Business
+    {
+        if (!$user) {
+            return null;
+        }
+
+        $explicit = $request->route('business') ?? $request->header('X-Business-Id');
+
+        if ($explicit) {
+            $business = $explicit instanceof Business
+                ? $explicit
+                : Business::where('id', $explicit)->orWhere('slug', $explicit)->first();
+
+            if (!$business) {
+                return null;
+            }
+
+            $permitted = $user->membershipFor($business) !== null
+                || (int) $business->owner_user_id === (int) $user->id;
+
+            return $permitted ? $business : null;
+        }
+
+        return static::forUser($user);
     }
 
     /**
@@ -59,24 +110,56 @@ class BusinessResolver
      * migration but before their business row existed), so flipping the flag
      * cannot make existing records disappear from their owner's list.
      */
+    /**
+     * Every business this user may act for — via membership or ownership.
+     *
+     * Deliberately NOT memoised in a static. Keying a process-lifetime cache on
+     * a user id is unsafe: ids repeat across tests, and a revoked membership
+     * has to take effect on the very next request. Lists resolve ownership once
+     * through scopeOwnedBy(), so this runs a couple of times per request at
+     * most — cache it on the request object if that ever stops being true.
+     *
+     * @return array<int>
+     */
+    public static function actableBusinessIds(User $user): array
+    {
+        return $user->memberBusinesses()->pluck('businesses.id')
+            ->merge(Business::where('owner_user_id', $user->id)->pluck('id'))
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
     public static function scopeOwnedBy(Builder $query, ?User $user): Builder
     {
         if (!$user) {
             return $query->whereRaw('1 = 0');
         }
 
+        $businessIds = static::actableBusinessIds($user);
+
+        // Note this is membership-aware in BOTH flag positions. The flag
+        // governs which COLUMN resolves ownership, not whether staff exist —
+        // and since no memberships exist until someone creates one, behaviour
+        // on existing data is unchanged either way.
         if (!static::usingBusinessEntity()) {
+            if (empty($businessIds)) {
+                return $query->where('user_id', $user->id);
+            }
+
+            return $query->where(function (Builder $inner) use ($businessIds, $user) {
+                $inner->where('user_id', $user->id)
+                    ->orWhereIn('business_id', $businessIds);
+            });
+        }
+
+        if (empty($businessIds)) {
             return $query->where('user_id', $user->id);
         }
 
-        $businessId = static::businessIdFor($user);
-
-        if ($businessId === null) {
-            return $query->where('user_id', $user->id);
-        }
-
-        return $query->where(function (Builder $inner) use ($businessId, $user) {
-            $inner->where('business_id', $businessId)
+        return $query->where(function (Builder $inner) use ($businessIds, $user) {
+            $inner->whereIn('business_id', $businessIds)
                 ->orWhere(function (Builder $legacy) use ($user) {
                     $legacy->whereNull('business_id')->where('user_id', $user->id);
                 });
@@ -111,16 +194,21 @@ class BusinessResolver
             return false;
         }
 
+        $businessIds = static::actableBusinessIds($user);
+        $recordBusinessId = $record->business_id !== null ? (int) $record->business_id : null;
+        $isCreator = (int) $record->user_id === (int) $user->id;
+
+        // Mirrors scopeOwnedBy() clause for clause. If these drift, a list
+        // shows rows whose detail endpoint then 404s.
         if (!static::usingBusinessEntity()) {
-            return (int) $record->user_id === (int) $user->id;
+            return $isCreator
+                || ($recordBusinessId !== null && in_array($recordBusinessId, $businessIds, true));
         }
 
-        $businessId = static::businessIdFor($user);
-
-        if ($businessId !== null && $record->business_id !== null) {
-            return (int) $record->business_id === $businessId;
+        if ($recordBusinessId !== null) {
+            return in_array($recordBusinessId, $businessIds, true);
         }
 
-        return (int) $record->user_id === (int) $user->id;
+        return $isCreator;
     }
 }
