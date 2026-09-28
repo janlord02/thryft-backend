@@ -11,6 +11,7 @@ use App\Models\Product;
 use App\Models\Coupon;
 use App\Models\ClaimedCoupon;
 use App\Services\NotificationService;
+use App\Support\BusinessResolver;
 use App\Support\DatabaseErrors;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
@@ -270,9 +271,13 @@ class UserDashboardController extends Controller
             $user = $request->user();
             $userId = $user ? $user->id : null;
 
-            // Validate business exists and is a business user
+            // Validate business exists and is a business user.
+            // 'business' lowercase: that is the value RoleMiddleware and every
+            // write path use. The capital 'B' here only ever worked because
+            // MySQL's default collation is case-insensitive — it matches
+            // nothing on SQLite, and nothing at all under a binary collation.
             $business = User::where('id', $businessId)
-                ->where('role', 'Business')
+                ->where('role', 'business')
                 ->first();
 
             if (!$business) {
@@ -642,6 +647,24 @@ class UserDashboardController extends Controller
     }
 
     /**
+     * The business id this user is acting for at the till.
+     *
+     * These endpoints used to hard-code $user->id, which worked only because
+     * the Phase 3a backfill seeded businesses.id from users.id — so for an
+     * OWNER the two happen to match. They do not match for a staff member, and
+     * they will not match for any business created after the backfill (those
+     * get ids from 1,000,000 up). The result was that staff accounts, the whole
+     * point of Phase 3b, could not redeem anything.
+     *
+     * Falls back to the user's own id for legacy accounts that have no business
+     * record yet, which is exactly the previous behaviour.
+     */
+    private function actingBusinessId(User $user): int
+    {
+        return BusinessResolver::businessIdFor($user) ?? $user->id;
+    }
+
+    /**
      * A chosen product must either be one the coupon explicitly covers, or —
      * for a store-wide offer — any product belonging to that business.
      */
@@ -748,10 +771,12 @@ class UserDashboardController extends Controller
             $businessId = $request->get('businessId');
             $timestamp = $request->get('timestamp');
 
-            // Ownership is checked BEFORE the lookup, and with a cast: request
-            // values arrive as strings, so the previous strict !== against
-            // $user->id (an int) was always true and produced spurious 403s.
-            if ((int) $businessId !== (int) $user->id) {
+            // The QR code carries the business it was issued for; compare it to
+            // the business the scanner is actually acting for, not to their own
+            // user id. Cast because request values arrive as strings.
+            $actingBusinessId = $this->actingBusinessId($user);
+
+            if ((int) $businessId !== $actingBusinessId) {
                 return response()->json([
                     'status' => 'error',
                     'message' => 'You can only scan coupons for your own business',
@@ -765,7 +790,7 @@ class UserDashboardController extends Controller
             $claimedCoupon = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
                 ->where('id', $claimedCouponId)
                 ->where('coupon_code', $couponCode)
-                ->where('business_id', $user->id)
+                ->where('business_id', $actingBusinessId)
                 ->where('user_id', $userId)
                 ->first();
 
@@ -857,8 +882,10 @@ class UserDashboardController extends Controller
                 return $this->respondWithCouponValidation($user, $couponCode);
             }
 
-            // Cast before comparing — see validateScan() for why.
-            if ((int) $businessId !== (int) $user->id) {
+            // Compare against the business being acted for — see validateScan().
+            $actingBusinessId = $this->actingBusinessId($user);
+
+            if ((int) $businessId !== $actingBusinessId) {
                 return response()->json([
                     'status' => 'error',
                     'message' => 'You can only scan coupons for your own business',
@@ -870,7 +897,7 @@ class UserDashboardController extends Controller
             $claimedCoupon = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
                 ->where('coupon_code', $couponCode)
                 ->where('user_id', $userId)
-                ->where('business_id', $user->id)
+                ->where('business_id', $actingBusinessId)
                 ->first();
 
             if (!$claimedCoupon) {
@@ -955,11 +982,12 @@ class UserDashboardController extends Controller
         try {
             $user = $request->user();
             $claimedCouponId = $request->get('claimedCouponId');
+            $actingBusinessId = $this->actingBusinessId($user);
 
             // Find the specific claimed coupon
             $claimedCoupon = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
                 ->where('id', $claimedCouponId)
-                ->where('business_id', $user->id)
+                ->where('business_id', $actingBusinessId)
                 ->where('status', 'claimed')
                 ->first();
 
@@ -1021,7 +1049,7 @@ class UserDashboardController extends Controller
 
         $claimedCoupons = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
             ->where('coupon_code', $couponCode)
-            ->where('business_id', $businessUser->id)
+            ->where('business_id', $this->actingBusinessId($businessUser))
             ->where('status', 'claimed')
             ->get();
 
@@ -1091,6 +1119,7 @@ class UserDashboardController extends Controller
         try {
             $user = $request->user();
             $couponCode = $request->get('couponCode');
+            $actingBusinessId = $this->actingBusinessId($user);
             // Accept both 'query' and 'searchQuery' for flexibility
             $searchQuery = $request->get('query') ?? $request->get('searchQuery');
 
@@ -1104,7 +1133,7 @@ class UserDashboardController extends Controller
             // Find claimed coupons by code for this business with search
             $claimedCoupons = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
                 ->where('coupon_code', $couponCode)
-                ->where('business_id', $user->id)
+                ->where('business_id', $actingBusinessId)
                 ->where('status', 'claimed')
                 ->whereHas('user', function ($query) use ($searchQuery) {
                     $query->where('name', 'LIKE', "%{$searchQuery}%")
@@ -1151,15 +1180,18 @@ class UserDashboardController extends Controller
 
         $user = $request->user();
         $notes = $validated['notes'] ?? 'Scanned and validated by business';
+        // Resolved once, outside the transaction: a staff member redeems for
+        // the business they work for, not for their own user id.
+        $actingBusinessId = $this->actingBusinessId($user);
 
         try {
-            $result = DB::transaction(function () use ($validated, $user, $notes) {
+            $result = DB::transaction(function () use ($validated, $user, $notes, $actingBusinessId) {
                 // Deliberately loaded WITHOUT a status filter: the old query
                 // filtered on status='claimed', so an already-used coupon came
                 // back as a 404 "not found", which reads to a merchant as if the
                 // customer produced a fake code.
                 $claim = ClaimedCoupon::where('id', $validated['claimedCouponId'])
-                    ->where('business_id', $user->id)
+                    ->where('business_id', $actingBusinessId)
                     ->first();
 
                 if (!$claim) {
@@ -1205,7 +1237,7 @@ class UserDashboardController extends Controller
                 // two concurrent redemptions can change the row.
                 $affected = ClaimedCoupon::query()
                     ->whereKey($claim->id)
-                    ->where('business_id', $user->id)
+                    ->where('business_id', $actingBusinessId)
                     ->where('status', 'claimed')
                     ->where(function ($query) {
                         $query->whereNull('expires_at')
