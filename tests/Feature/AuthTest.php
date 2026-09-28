@@ -13,11 +13,13 @@ class AuthTest extends TestCase
 
     public function test_user_can_register()
     {
+        // Password must satisfy the configured complexity rules, which default to
+        // requiring upper, lower and numeric characters (see AuthController::register).
         $response = $this->postJson('/api/register', [
             'name' => 'Test User',
             'email' => 'test@example.com',
-            'password' => 'password123',
-            'password_confirmation' => 'password123',
+            'password' => 'Password123',
+            'password_confirmation' => 'Password123',
         ]);
 
         $response->assertStatus(201)
@@ -52,8 +54,10 @@ class AuthTest extends TestCase
             'password_confirmation' => '456',
         ]);
 
+        // 'name' is intentionally nullable since firstname/lastname were added,
+        // so only email and password are expected to fail validation here.
         $response->assertStatus(422)
-            ->assertJsonValidationErrors(['name', 'email', 'password']);
+            ->assertJsonValidationErrors(['email', 'password']);
     }
 
     public function test_user_can_login_with_valid_credentials()
@@ -69,6 +73,9 @@ class AuthTest extends TestCase
             'password' => 'password123',
         ]);
 
+        // NOTE: login returns token/refresh_token but no 'token_type', while
+        // register does return it. That inconsistency is real and predates this
+        // test; asserted as-is here rather than changing a live response shape.
         $response->assertStatus(200)
             ->assertJsonStructure([
                 'status',
@@ -76,7 +83,8 @@ class AuthTest extends TestCase
                 'data' => [
                     'user',
                     'token',
-                    'token_type'
+                    'refresh_token',
+                    'requires_2fa'
                 ]
             ]);
     }

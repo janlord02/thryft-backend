@@ -4,13 +4,18 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use App\Exceptions\CouponConflictException;
 use App\Models\ActivityLog;
 use App\Models\User;
 use App\Models\Product;
 use App\Models\Coupon;
 use App\Models\ClaimedCoupon;
 use App\Services\NotificationService;
+use App\Support\BusinessResolver;
+use App\Support\DatabaseErrors;
 use Carbon\Carbon;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 
@@ -266,9 +271,13 @@ class UserDashboardController extends Controller
             $user = $request->user();
             $userId = $user ? $user->id : null;
 
-            // Validate business exists and is a business user
+            // Validate business exists and is a business user.
+            // 'business' lowercase: that is the value RoleMiddleware and every
+            // write path use. The capital 'B' here only ever worked because
+            // MySQL's default collation is case-insensitive — it matches
+            // nothing on SQLite, and nothing at all under a binary collation.
             $business = User::where('id', $businessId)
-                ->where('role', 'Business')
+                ->where('role', 'business')
                 ->first();
 
             if (!$business) {
@@ -302,7 +311,7 @@ class UserDashboardController extends Controller
                 ->filter(function ($coupon) use ($userId) {
                     if (!$userId) {
                         // If no user, only show available coupons
-                        return $coupon->canBeUsed();
+                        return $coupon->canBeClaimed();
                     }
                     // Check if current user has claimed this coupon
                     $userClaimedCoupon = ClaimedCoupon::where('user_id', $userId)
@@ -313,7 +322,7 @@ class UserDashboardController extends Controller
                     // Show coupon if:
                     // 1. User has claimed it, OR
                     // 2. Coupon is still available (not claimed by anyone or within limits)
-                    return $userClaimedCoupon || $coupon->canBeUsed();
+                    return $userClaimedCoupon || $coupon->canBeClaimed();
                 })
                 ->map(function ($coupon) use ($userId) {
                     $isClaimedByUser = false;
@@ -348,7 +357,7 @@ class UserDashboardController extends Controller
                         'expires_at' => $coupon->expires_at,
                         'is_active' => $coupon->is_active,
                         'is_valid' => $coupon->is_valid,
-                        'can_be_used' => $coupon->canBeUsed(),
+                        'can_be_used' => $coupon->canBeClaimed(),
                         'is_claimed_by_user' => $isClaimedByUser,
                         'claimed_at' => $claimedAt,
                         'product_id' => null, // Will be set if attached to a product
@@ -369,7 +378,7 @@ class UserDashboardController extends Controller
                 $product->coupons = $product->coupons->filter(function ($coupon) use ($userId) {
                     if (!$userId) {
                         // If no user, only show available coupons
-                        return $coupon->canBeUsed();
+                        return $coupon->canBeClaimed();
                     }
                     // Check if current user has claimed this coupon
                     $userClaimedCoupon = ClaimedCoupon::where('user_id', $userId)
@@ -380,7 +389,7 @@ class UserDashboardController extends Controller
                     // Show coupon if:
                     // 1. User has claimed it, OR
                     // 2. Coupon is still available (not claimed by anyone or within limits)
-                    return $userClaimedCoupon || $coupon->canBeUsed();
+                    return $userClaimedCoupon || $coupon->canBeClaimed();
                 });
 
                 return $product;
@@ -450,7 +459,7 @@ class UserDashboardController extends Controller
                             'expires_at' => $coupon->expires_at,
                             'is_active' => $coupon->is_active,
                             'is_valid' => $coupon->is_valid,
-                            'can_be_used' => $coupon->canBeUsed(),
+                            'can_be_used' => $coupon->canBeClaimed(),
                             'is_claimed_by_user' => $isClaimedByUser,
                             'claimed_at' => $claimedAt,
                             'product_id' => $product->id,
@@ -528,95 +537,155 @@ class UserDashboardController extends Controller
      */
     public function claimCoupon(Request $request)
     {
+        $validated = $request->validate([
+            'coupon_id' => ['required', 'integer', 'exists:coupons,id'],
+            'product_id' => ['nullable', 'integer', 'exists:products,id'],
+        ]);
+
+        $user = $request->user();
+        $productId = $validated['product_id'] ?? null;
+
+        $coupon = Coupon::with(['user', 'products'])
+            ->where('id', $validated['coupon_id'])
+            ->where('is_active', true)
+            ->first();
+
+        if (!$coupon) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Coupon not found or inactive',
+            ], 404);
+        }
+
+        // Advisory only. The authoritative checks are the unique index and the
+        // conditional counter update inside the transaction below; this just
+        // produces a friendlier message in the common, uncontended case.
+        if (!$coupon->canBeClaimed()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Coupon is no longer available',
+            ], 400);
+        }
+
+        // product_id used to be written straight through from the request, so a
+        // claim could be pinned to any product in the system, including another
+        // business's.
+        if ($productId !== null && !$this->productIsValidForCoupon($coupon, $productId)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => ['product_id' => ['The selected product is not available for this coupon.']],
+            ], 422);
+        }
+
         try {
-            $user = $request->user();
-            $couponId = $request->get('coupon_id');
-            $productId = $request->get('product_id');
+            $claimedCoupon = DB::transaction(function () use ($coupon, $user, $productId) {
+                try {
+                    $claim = ClaimedCoupon::create([
+                        'user_id' => $user->id,
+                        'coupon_id' => $coupon->id,
+                        // The coupon's BUSINESS, not whoever created it. Using
+                        // $coupon->user_id only worked while business ids were
+                        // aliased to owner user ids by the backfill: a business
+                        // created afterwards has id >= 1,000,000, so the claim
+                        // would be filed under the owner's user id and every
+                        // till lookup (which resolves a businesses.id) would
+                        // miss it — and on MySQL the FK to businesses would
+                        // reject the insert outright. Same divergence when a
+                        // staff member creates the coupon.
+                        'business_id' => $coupon->business_id ?? $coupon->user_id,
+                        'product_id' => $productId,
+                        'coupon_code' => $coupon->code,
+                        'coupon_title' => $coupon->title,
+                        'coupon_description' => $coupon->description,
+                        'discount_type' => $coupon->discount_type,
+                        'discount_amount' => $coupon->discount_amount,
+                        'discount_percentage' => $coupon->discount_percentage,
+                        'minimum_amount' => $coupon->minimum_amount,
+                        'expires_at' => $coupon->expires_at,
+                        'status' => 'claimed',
+                    ]);
+                } catch (QueryException $e) {
+                    // claimed_coupons_user_coupon_unique. This is the race
+                    // backstop for two simultaneous claims by the same user.
+                    if (DatabaseErrors::isUniqueViolation($e)) {
+                        throw CouponConflictException::alreadyClaimed();
+                    }
 
-            // Validate coupon exists and is claimable
-            $coupon = Coupon::with(['user', 'products'])
-                ->where('id', $couponId)
-                ->where('is_active', true)
-                ->first();
+                    throw $e;
+                }
 
-            if (!$coupon) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Coupon not found or inactive',
-                ], 404);
-            }
+                // Insert first, then take the slot: if the cap is already gone
+                // the throw rolls the insert back, leaving no orphan claim.
+                if (!$coupon->tryIncrementClaimCount()) {
+                    throw CouponConflictException::claimLimitReached();
+                }
 
-            // Check if coupon is valid
-            if (!$coupon->canBeUsed()) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Coupon is no longer available',
-                ], 400);
-            }
-
-            // Check if user has already claimed this coupon
-            $existingClaim = ClaimedCoupon::where('user_id', $user->id)
-                ->where('coupon_id', $couponId)
-                ->whereIn('status', ['claimed', 'used'])
-                ->first();
-
-            if ($existingClaim) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'You have already claimed this coupon',
-                ], 400);
-            }
-
-            // Check per-user limit
-            $userClaimCount = ClaimedCoupon::where('user_id', $user->id)
-                ->where('coupon_id', $couponId)
-                ->count();
-
-            if ($coupon->per_user_limit && $userClaimCount >= $coupon->per_user_limit) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'You have reached the limit for this coupon',
-                ], 400);
-            }
-
-            // Create claimed coupon record
-            $claimedCoupon = ClaimedCoupon::create([
+                return $claim;
+            });
+        } catch (CouponConflictException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+                'code' => $e->reason,
+            ], $e->status);
+        } catch (\Throwable $e) {
+            Log::error('Failed to claim coupon', [
                 'user_id' => $user->id,
                 'coupon_id' => $coupon->id,
-                'business_id' => $coupon->user_id,
-                'product_id' => $productId,
-                'coupon_code' => $coupon->code,
-                'coupon_title' => $coupon->title,
-                'coupon_description' => $coupon->description,
-                'discount_type' => $coupon->discount_type,
-                'discount_amount' => $coupon->discount_amount,
-                'discount_percentage' => $coupon->discount_percentage,
-                'minimum_amount' => $coupon->minimum_amount,
-                'expires_at' => $coupon->expires_at,
-                'status' => 'claimed',
+                'error' => $e->getMessage(),
             ]);
 
-            // Increment coupon usage count
-            $coupon->incrementUsage();
-
-            // Send notification to business owner about coupon claim
-            $this->notifyBusinessOfCouponClaim($claimedCoupon);
-
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Coupon claimed successfully!',
-                'data' => [
-                    'claimed_coupon' => $claimedCoupon->load(['business', 'product', 'coupon']),
-                ],
-            ]);
-
-        } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to claim coupon',
-                'error' => $e->getMessage(),
             ], 500);
         }
+
+        // Outside the transaction: a notification failure must not roll back a
+        // successful claim.
+        $this->notifyBusinessOfCouponClaim($claimedCoupon);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Coupon claimed successfully!',
+            'data' => [
+                'claimed_coupon' => $claimedCoupon->load(['business', 'product', 'coupon']),
+            ],
+        ]);
+    }
+
+    /**
+     * The business id this user is acting for at the till.
+     *
+     * These endpoints used to hard-code $user->id, which worked only because
+     * the Phase 3a backfill seeded businesses.id from users.id — so for an
+     * OWNER the two happen to match. They do not match for a staff member, and
+     * they will not match for any business created after the backfill (those
+     * get ids from 1,000,000 up). The result was that staff accounts, the whole
+     * point of Phase 3b, could not redeem anything.
+     *
+     * Falls back to the user's own id for legacy accounts that have no business
+     * record yet, which is exactly the previous behaviour.
+     */
+    private function actingBusinessId(User $user): int
+    {
+        return BusinessResolver::businessIdFor($user) ?? $user->id;
+    }
+
+    /**
+     * A chosen product must either be one the coupon explicitly covers, or —
+     * for a store-wide offer — any product belonging to that business.
+     */
+    private function productIsValidForCoupon(Coupon $coupon, int $productId): bool
+    {
+        if ($coupon->products->isNotEmpty()) {
+            return $coupon->products->contains('id', $productId);
+        }
+
+        return Product::where('id', $productId)
+            ->where('user_id', $coupon->user_id)
+            ->exists();
     }
 
     /**
@@ -711,13 +780,27 @@ class UserDashboardController extends Controller
             $businessId = $request->get('businessId');
             $timestamp = $request->get('timestamp');
 
-            // Validate the claimed coupon
+            // The QR code carries the business it was issued for; compare it to
+            // the business the scanner is actually acting for, not to their own
+            // user id. Cast because request values arrive as strings.
+            $actingBusinessId = $this->actingBusinessId($user);
+
+            if ((int) $businessId !== $actingBusinessId) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'You can only scan coupons for your own business',
+                ], 403);
+            }
+
+            // Deliberately not filtered by status, so "already used" can be
+            // reported as such. The old query filtered status='claimed', which
+            // made the used-branch below unreachable and surfaced a used coupon
+            // as a 404 "not found".
             $claimedCoupon = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
                 ->where('id', $claimedCouponId)
                 ->where('coupon_code', $couponCode)
-                ->where('business_id', $businessId)
+                ->where('business_id', $actingBusinessId)
                 ->where('user_id', $userId)
-                ->where('status', 'claimed')
                 ->first();
 
             if (!$claimedCoupon) {
@@ -727,28 +810,28 @@ class UserDashboardController extends Controller
                 ], 404);
             }
 
-            // Check if coupon is still valid (not expired)
-            if ($claimedCoupon->is_expired) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Coupon has expired',
-                ], 400);
-            }
-
-            // Check if coupon is already used
             if ($claimedCoupon->status === 'used') {
                 return response()->json([
                     'status' => 'error',
                     'message' => 'Coupon has already been used',
+                    'code' => 'already_redeemed',
+                ], 409);
+            }
+
+            if ($claimedCoupon->status !== 'claimed') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'This coupon is no longer valid',
+                    'code' => 'not_redeemable',
                 ], 400);
             }
 
-            // Verify the business user is scanning their own coupon
-            if ($user->id !== $businessId) {
+            if ($claimedCoupon->is_expired) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'You can only scan coupons for your own business',
-                ], 403);
+                    'message' => 'Coupon has expired',
+                    'code' => 'coupon_expired',
+                ], 400);
             }
 
             return response()->json([
@@ -808,12 +891,22 @@ class UserDashboardController extends Controller
                 return $this->respondWithCouponValidation($user, $couponCode);
             }
 
-            // Find the claimed coupon by coupon code and user ID
+            // Compare against the business being acted for — see validateScan().
+            $actingBusinessId = $this->actingBusinessId($user);
+
+            if ((int) $businessId !== $actingBusinessId) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'You can only scan coupons for your own business',
+                ], 403);
+            }
+
+            // Not filtered by status, so an already-used coupon reports as used
+            // rather than as missing.
             $claimedCoupon = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
                 ->where('coupon_code', $couponCode)
                 ->where('user_id', $userId)
-                ->where('business_id', $businessId)
-                ->where('status', 'claimed')
+                ->where('business_id', $actingBusinessId)
                 ->first();
 
             if (!$claimedCoupon) {
@@ -823,28 +916,28 @@ class UserDashboardController extends Controller
                 ], 404);
             }
 
-            // Check if coupon is still valid (not expired)
-            if ($claimedCoupon->is_expired) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Coupon has expired',
-                ], 400);
-            }
-
-            // Check if coupon is already used
             if ($claimedCoupon->status === 'used') {
                 return response()->json([
                     'status' => 'error',
                     'message' => 'Coupon has already been used',
+                    'code' => 'already_redeemed',
+                ], 409);
+            }
+
+            if ($claimedCoupon->status !== 'claimed') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'This coupon is no longer valid',
+                    'code' => 'not_redeemable',
                 ], 400);
             }
 
-            // Verify the business user is scanning their own coupon
-            if ($user->id !== $businessId) {
+            if ($claimedCoupon->is_expired) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'You can only scan coupons for your own business',
-                ], 403);
+                    'message' => 'Coupon has expired',
+                    'code' => 'coupon_expired',
+                ], 400);
             }
 
             return response()->json([
@@ -898,11 +991,12 @@ class UserDashboardController extends Controller
         try {
             $user = $request->user();
             $claimedCouponId = $request->get('claimedCouponId');
+            $actingBusinessId = $this->actingBusinessId($user);
 
             // Find the specific claimed coupon
             $claimedCoupon = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
                 ->where('id', $claimedCouponId)
-                ->where('business_id', $user->id)
+                ->where('business_id', $actingBusinessId)
                 ->where('status', 'claimed')
                 ->first();
 
@@ -964,7 +1058,7 @@ class UserDashboardController extends Controller
 
         $claimedCoupons = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
             ->where('coupon_code', $couponCode)
-            ->where('business_id', $businessUser->id)
+            ->where('business_id', $this->actingBusinessId($businessUser))
             ->where('status', 'claimed')
             ->get();
 
@@ -1034,6 +1128,7 @@ class UserDashboardController extends Controller
         try {
             $user = $request->user();
             $couponCode = $request->get('couponCode');
+            $actingBusinessId = $this->actingBusinessId($user);
             // Accept both 'query' and 'searchQuery' for flexibility
             $searchQuery = $request->get('query') ?? $request->get('searchQuery');
 
@@ -1047,7 +1142,7 @@ class UserDashboardController extends Controller
             // Find claimed coupons by code for this business with search
             $claimedCoupons = ClaimedCoupon::with(['user', 'business', 'product', 'coupon'])
                 ->where('coupon_code', $couponCode)
-                ->where('business_id', $user->id)
+                ->where('business_id', $actingBusinessId)
                 ->where('status', 'claimed')
                 ->whereHas('user', function ($query) use ($searchQuery) {
                     $query->where('name', 'LIKE', "%{$searchQuery}%")
@@ -1087,44 +1182,130 @@ class UserDashboardController extends Controller
      */
     public function markAsUsed(Request $request)
     {
+        $validated = $request->validate([
+            'claimedCouponId' => ['required', 'integer'],
+            'notes' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $user = $request->user();
+        $notes = $validated['notes'] ?? 'Scanned and validated by business';
+        // Resolved once, outside the transaction: a staff member redeems for
+        // the business they work for, not for their own user id.
+        $actingBusinessId = $this->actingBusinessId($user);
+
         try {
-            $user = $request->user();
-            $claimedCouponId = $request->get('claimedCouponId');
+            $result = DB::transaction(function () use ($validated, $user, $notes, $actingBusinessId) {
+                // Deliberately loaded WITHOUT a status filter: the old query
+                // filtered on status='claimed', so an already-used coupon came
+                // back as a 404 "not found", which reads to a merchant as if the
+                // customer produced a fake code.
+                $claim = ClaimedCoupon::where('id', $validated['claimedCouponId'])
+                    ->where('business_id', $actingBusinessId)
+                    ->first();
 
-            // Find the claimed coupon
-            $claimedCoupon = ClaimedCoupon::where('id', $claimedCouponId)
-                ->where('business_id', $user->id)
-                ->where('status', 'claimed')
-                ->first();
+                if (!$claim) {
+                    throw CouponConflictException::notRedeemable();
+                }
 
-            if (!$claimedCoupon) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Coupon not found or already used',
-                ], 404);
-            }
+                if ($claim->status === 'used') {
+                    // A dropped response makes the till retry. Treat an
+                    // immediate repeat by the same operator as success rather
+                    // than accusing them of a double redemption.
+                    if (
+                        (int) $claim->redeemed_by_user_id === (int) $user->id
+                        && $claim->used_at
+                        && $claim->used_at->gt(now()->subSeconds(60))
+                    ) {
+                        return ['claim' => $claim, 'idempotent' => true];
+                    }
 
-            // Mark as used
-            $claimedCoupon->markAsUsed('Scanned and validated by business');
+                    throw new CouponConflictException('already_redeemed', 'This coupon has already been used.');
+                }
 
-            // Emit WebSocket event to notify user about coupon status change
-            event(new \App\Events\CouponStatusChanged($claimedCoupon->fresh()));
+                if ($claim->status !== 'claimed') {
+                    throw CouponConflictException::notRedeemable();
+                }
 
+                // Expiry is re-checked here; previously it was only checked by
+                // the validate endpoints, so an expired claim could still be
+                // redeemed by calling this directly.
+                if ($claim->is_expired) {
+                    throw CouponConflictException::couponExpired();
+                }
+
+                // Honour the snapshot expiry above (that is the promise the
+                // customer was shown), but respect a live withdrawal: a merchant
+                // may pull an offer, they just cannot retroactively shorten it.
+                $coupon = Coupon::find($claim->coupon_id);
+
+                if ($coupon && !$coupon->is_active) {
+                    throw CouponConflictException::offerWithdrawn();
+                }
+
+                // The atomic guard: WHERE status = 'claimed' means only one of
+                // two concurrent redemptions can change the row.
+                $affected = ClaimedCoupon::query()
+                    ->whereKey($claim->id)
+                    ->where('business_id', $actingBusinessId)
+                    ->where('status', 'claimed')
+                    ->where(function ($query) {
+                        $query->whereNull('expires_at')
+                            ->orWhere('expires_at', '>', now());
+                    })
+                    ->update([
+                        'status' => 'used',
+                        'used_at' => now(),
+                        'redeemed_by_user_id' => $user->id,
+                        'usage_notes' => $notes,
+                        'updated_at' => now(),
+                    ]);
+
+                if ($affected !== 1) {
+                    throw new CouponConflictException('already_redeemed', 'This coupon has already been used.');
+                }
+
+                // Throwing here rolls the status change back, so the claim stays
+                // redeemable rather than being burned against a full counter.
+                if ($coupon && !$coupon->tryIncrementRedeemCount()) {
+                    throw CouponConflictException::redemptionLimitReached();
+                }
+
+                return ['claim' => $claim->refresh(), 'idempotent' => false];
+            });
+        } catch (CouponConflictException $e) {
             return response()->json([
-                'status' => 'success',
-                'message' => 'Coupon marked as used successfully',
-                'data' => [
-                    'claimedCoupon' => $claimedCoupon->fresh(),
-                ],
+                'status' => 'error',
+                'message' => $e->getMessage(),
+                'code' => $e->reason,
+            ], $e->status);
+        } catch (\Throwable $e) {
+            Log::error('Failed to mark coupon as used', [
+                'user_id' => $user->id,
+                'claimed_coupon_id' => $validated['claimedCouponId'],
+                'error' => $e->getMessage(),
             ]);
 
-        } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to mark coupon as used',
-                'error' => $e->getMessage(),
             ], 500);
         }
+
+        $claimedCoupon = $result['claim'];
+
+        // Only broadcast on a real transition; a retry should not re-notify.
+        if (!$result['idempotent']) {
+            event(new \App\Events\CouponStatusChanged($claimedCoupon));
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Coupon marked as used successfully',
+            'already_redeemed_by_you' => $result['idempotent'],
+            'data' => [
+                'claimedCoupon' => $claimedCoupon,
+            ],
+        ]);
     }
 
     /**

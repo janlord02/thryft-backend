@@ -1,2 +1,15 @@
 User-agent: *
-Disallow:
+
+# Public, crawlable surfaces
+Allow: /b/
+
+# Application and API surfaces. These are not useful to a crawler and several
+# are rate limited per IP, so letting a bot walk them wastes budget on both
+# sides. Excluding them is not an access control — everything sensitive is
+# already behind auth.
+Disallow: /api/
+Disallow: /email/verify/
+Disallow: /password/reset/
+Disallow: /up
+
+Sitemap: https://thryft.net/sitemap.xml
