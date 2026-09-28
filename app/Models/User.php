@@ -254,6 +254,121 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * Businesses this user owns.
+     *
+     * A hasMany rather than a hasOne from the outset: ownership becomes
+     * many-to-many through business_members in Phase 3b, and callers written
+     * against a collection will not need rewriting then.
+     */
+    public function businesses(): HasMany
+    {
+        return $this->hasMany(Business::class, 'owner_user_id');
+    }
+
+    /**
+     * Memberships giving this user standing in a business.
+     */
+    public function businessMemberships(): HasMany
+    {
+        return $this->hasMany(BusinessMember::class);
+    }
+
+    /**
+     * Businesses this user may act for, via an active membership.
+     */
+    public function memberBusinesses()
+    {
+        return $this->belongsToMany(Business::class, 'business_members')
+            ->withPivot(['role', 'permissions', 'status'])
+            ->wherePivot('status', 'active')
+            ->withTimestamps();
+    }
+
+    /**
+     * The business this user is currently acting as.
+     */
+    public function currentBusiness(): ?Business
+    {
+        return \App\Support\BusinessResolver::forUser($this);
+    }
+
+    /**
+     * This user's membership of a given business, if any.
+     */
+    public function membershipFor(Business|int|null $business): ?BusinessMember
+    {
+        $businessId = $business instanceof Business ? $business->id : $business;
+
+        if (!$businessId) {
+            return null;
+        }
+
+        return $this->businessMemberships()
+            ->where('business_id', $businessId)
+            ->active()
+            ->first();
+    }
+
+    /**
+     * Does this user hold an ability for a business?
+     *
+     * Super admins are handled by a Gate::before hook rather than here, so this
+     * stays a pure membership question.
+     *
+     * The legacy fallback matters during the rollout: a user whose role is
+     * still 'business' and who owns the business, but for whom no membership
+     * row exists yet, is treated as its owner. Without it, any account
+     * promoted to business after the backfill would lose access.
+     */
+    public function hasBusinessAbility(string $ability, Business|int|null $business): bool
+    {
+        $membership = $this->membershipFor($business);
+
+        if ($membership) {
+            return $membership->hasAbility($ability);
+        }
+
+        $businessId = $business instanceof Business ? $business->id : $business;
+
+        if ($businessId && $this->role === 'business') {
+            $ownsIt = Business::whereKey($businessId)->where('owner_user_id', $this->id)->exists();
+
+            if ($ownsIt) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Get the user's subscription grants.
+     */
+    public function userSubscriptions(): HasMany
+    {
+        return $this->hasMany(UserSubscription::class);
+    }
+
+    /**
+     * The subscription currently entitling this user to business features, if
+     * any. Includes a past_due subscription still inside its grace period —
+     * see UserSubscription::grantsAccess().
+     */
+    public function activeSubscription(): ?UserSubscription
+    {
+        return $this->userSubscriptions()
+            ->grantingAccess()
+            ->with('subscription')
+            ->latest('starts_at')
+            ->first();
+    }
+
+    public function hasActiveSubscription(): bool
+    {
+        return $this->activeSubscription() !== null;
+    }
+
+    /**
      * Get the products that the user has favorited.
      */
     public function favoriteProducts()

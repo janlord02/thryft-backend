@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use App\Http\Resources\PublicBusinessResource;
 use App\Models\User;
 use App\Models\Product;
 use App\Models\Coupon;
@@ -97,19 +98,29 @@ class SearchController extends Controller
                         ->whereBetween('longitude', [$minLng, $maxLng]);
                 }
 
+                // This endpoint is UNAUTHENTICATED. It previously returned
+                // $business->email — which is users.email, the owner's account
+                // login, not a published contact address. That handed out a
+                // credential-stuffing target and a scrapeable spam list to
+                // anyone who called /api/search.
+                //
+                // Routed through the allowlist resource so adding a column to
+                // users can never silently publish it. The legacy keys below
+                // are preserved so the existing frontend keeps working.
                 $results['businesses'] = $businessQuery->limit($limit)->get()->map(function ($business) {
+                    $public = (new PublicBusinessResource($business))->toArray(request());
+
                     return [
-                        'id' => $business->id,
-                        'name' => $business->business_name ?: $business->name,
-                        'description' => $business->business_description ?: $business->bio,
-                        'profile_image_url' => $business->profile_image_url,
-                        'address' => $business->address,
-                        'city' => $business->city,
-                        'state' => $business->state,
-                        'phone' => $business->phone,
-                        'email' => $business->email,
+                        'id' => $public['id'],
+                        'name' => $public['name'],
+                        'description' => $public['description'],
+                        'profile_image_url' => $public['logo_url'],
+                        'address' => $public['location']['address'] ?? null,
+                        'city' => $public['location']['city'] ?? null,
+                        'state' => $public['location']['state'] ?? null,
+                        'phone' => $public['phone'],
                         'distance' => null,
-                        'type' => 'business'
+                        'type' => 'business',
                     ];
                 });
             }
