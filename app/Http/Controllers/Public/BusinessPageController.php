@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Public;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\PublicBusinessResource;
+use App\Http\Resources\PublicCouponResource;
 use App\Models\Business;
 use App\Models\Coupon;
-use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 /**
  * Server-rendered, crawlable business and deal pages on the marketing domain.
@@ -30,6 +32,10 @@ class BusinessPageController extends Controller
         $business->load('primaryLocation');
 
         $coupons = Coupon::where('business_id', $business->id)
+            // whereNotNull('slug'): route('public.deal') throws
+            // UrlGenerationException on a null parameter, which would 500 the
+            // whole page for one unslugged coupon.
+            ->whereNotNull('slug')
             ->active()
             ->valid()
             ->orderByDesc('is_featured')
@@ -37,9 +43,16 @@ class BusinessPageController extends Controller
             ->limit(24)
             ->get();
 
+        $public = (new PublicBusinessResource($business))->toArray(request());
+
         return view('public.business', [
             'business' => $business,
             'coupons' => $coupons,
+            'public' => $public,
+            'metaTitle' => $public['name'] . ' — Thryft',
+            'metaDescription' => $this->describeBusiness($public),
+            'ogType' => 'business.business',
+            'ogImage' => $public['cover_url'] ?? $public['logo_url'],
         ]);
     }
 
@@ -58,9 +71,32 @@ class BusinessPageController extends Controller
 
         $business->load('primaryLocation');
 
+        $biz = (new PublicBusinessResource($business))->toArray(request());
+        $deal = (new PublicCouponResource($coupon))->toArray(request());
+
         return view('public.deal', [
             'business' => $business,
             'coupon' => $coupon,
+            'biz' => $biz,
+            'deal' => $deal,
+            'metaTitle' => $deal['title'] . ' at ' . $biz['name'] . ' — Thryft',
+            'metaDescription' => $deal['description']
+                ? Str::limit(strip_tags($deal['description']), 155)
+                : $deal['formatted_discount'] . ' off at ' . $biz['name'] . '. Claim on Thryft.',
+            'ogType' => 'product',
+            'ogImage' => $deal['banner_url'] ?? $biz['logo_url'],
         ]);
+    }
+
+    private function describeBusiness(array $public): string
+    {
+        if ($public['description']) {
+            return Str::limit(strip_tags($public['description']), 155);
+        }
+
+        $city = $public['location']['city'] ?? null;
+
+        return trim($public['name'] . ' on Thryft' . ($city ? ' — ' . $city : '')
+            . '. See current deals and offers.');
     }
 }

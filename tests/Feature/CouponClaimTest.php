@@ -30,7 +30,9 @@ class CouponClaimTest extends TestCase
         $this->assertDatabaseHas('claimed_coupons', [
             'user_id' => $customer->id,
             'coupon_id' => $coupon->id,
-            'business_id' => $coupon->user_id,
+            // The coupon's BUSINESS, not its creator's user id — business ids
+            // and user ids only coincide for accounts the backfill migrated.
+            'business_id' => $coupon->business_id,
             'status' => 'claimed',
         ]);
 

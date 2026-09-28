@@ -77,6 +77,20 @@ class Coupon extends Model
                 $coupon->code = strtoupper(Str::random(8));
             }
         });
+
+        // Slugs are the public URL segment. Generated AFTER insert because the
+        // id is part of the slug — it guarantees uniqueness without probing,
+        // and stops titles producing an enumerable URL space. Without this,
+        // every coupon created after the slug migration had slug = NULL and
+        // route('public.deal') threw UrlGenerationException, 500-ing the
+        // business page that listed it.
+        static::created(function ($coupon) {
+            if (empty($coupon->slug)) {
+                $base = Str::limit(Str::slug((string) $coupon->title), 60, '');
+                $coupon->slug = ($base !== '' ? $base : 'deal') . '-' . $coupon->id;
+                $coupon->saveQuietly();
+            }
+        });
     }
 
     // Relationships

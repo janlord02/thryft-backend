@@ -138,7 +138,7 @@ class ProductController extends Controller
     public function show(Product $product)
     {
         // Ensure user can only access their own products
-        if (!BusinessResolver::owns(Auth::user(), $product)) {
+        if (Auth::user()->cannot('update', $product)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Product not found',
@@ -159,7 +159,7 @@ class ProductController extends Controller
     public function update(Request $request, Product $product)
     {
         // Ensure user can only update their own products
-        if (!BusinessResolver::owns(Auth::user(), $product)) {
+        if (Auth::user()->cannot('update', $product)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Product not found',
@@ -239,7 +239,7 @@ class ProductController extends Controller
     public function destroy(Product $product)
     {
         // Ensure user can only delete their own products
-        if (!BusinessResolver::owns(Auth::user(), $product)) {
+        if (Auth::user()->cannot('update', $product)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Product not found',
@@ -268,7 +268,7 @@ class ProductController extends Controller
     public function toggleStatus(Product $product)
     {
         // Ensure user can only toggle their own products
-        if (!BusinessResolver::owns(Auth::user(), $product)) {
+        if (Auth::user()->cannot('update', $product)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Product not found',
@@ -290,7 +290,7 @@ class ProductController extends Controller
     public function toggleFeatured(Product $product)
     {
         // Ensure user can only toggle their own products
-        if (!BusinessResolver::owns(Auth::user(), $product)) {
+        if (Auth::user()->cannot('update', $product)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Product not found',

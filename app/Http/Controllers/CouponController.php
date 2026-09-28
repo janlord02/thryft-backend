@@ -150,7 +150,7 @@ class CouponController extends Controller
     public function show(Coupon $coupon)
     {
         // Ensure user can only view their own coupons
-        if (!BusinessResolver::owns(Auth::user(), $coupon)) {
+        if (Auth::user()->cannot('update', $coupon)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Coupon not found',
@@ -169,7 +169,7 @@ class CouponController extends Controller
     public function update(Request $request, Coupon $coupon)
     {
         // Ensure user can only update their own coupons
-        if (!BusinessResolver::owns(Auth::user(), $coupon)) {
+        if (Auth::user()->cannot('update', $coupon)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Coupon not found',
@@ -275,7 +275,7 @@ class CouponController extends Controller
     public function destroy(Coupon $coupon)
     {
         // Ensure user can only delete their own coupons
-        if (!BusinessResolver::owns(Auth::user(), $coupon)) {
+        if (Auth::user()->cannot('update', $coupon)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Coupon not found',
@@ -303,7 +303,7 @@ class CouponController extends Controller
     public function toggleFeatured(Coupon $coupon)
     {
         // Ensure user can only modify their own coupons
-        if (!BusinessResolver::owns(Auth::user(), $coupon)) {
+        if (Auth::user()->cannot('update', $coupon)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Coupon not found',

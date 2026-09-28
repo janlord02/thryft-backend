@@ -39,9 +39,20 @@ class GuestBrowseController extends Controller
         $query = Business::active()->with('primaryLocation');
 
         if ($term = $validated['q'] ?? null) {
-            $query->where(function ($q) use ($term) {
-                $q->where('name', 'like', '%' . $this->escapeLike($term) . '%')
-                    ->orWhere('description', 'like', '%' . $this->escapeLike($term) . '%');
+            $pattern = '%' . $this->escapeLike($term) . '%';
+
+            // ESCAPE is required for the escaping in $pattern to mean anything:
+            // Laravel's ->where(…, 'like', …) emits no ESCAPE clause, so
+            // without this a term like "a_b" silently matches the wrong rows.
+            //
+            // '!' rather than a backslash, because backslash is not portable
+            // here — MySQL treats it as an escape inside the string literal
+            // (ESCAPE '\' is a syntax error, ESCAPE '\\' is needed), while
+            // SQLite wants exactly one character and rejects '\\'. '!' needs
+            // no escaping in either dialect.
+            $query->where(function ($q) use ($pattern) {
+                $q->whereRaw("name LIKE ? ESCAPE '!'", [$pattern])
+                    ->orWhereRaw("description LIKE ? ESCAPE '!'", [$pattern]);
             });
         }
 
@@ -80,6 +91,10 @@ class GuestBrowseController extends Controller
 
         $query = Coupon::active()->valid()
             ->whereNotNull('business_id')
+            // Suspended and soft-deleted businesses are hidden by every other
+            // public surface; without this their deals stayed in the guest
+            // feed, carrying the business name, phone and address with them.
+            ->whereHas('business', fn ($q) => $q->where('status', 'active'))
             ->with(['business' => fn ($q) => $q->with('primaryLocation')]);
 
         if ($request->boolean('featured')) {
@@ -134,11 +149,15 @@ class GuestBrowseController extends Controller
     }
 
     /**
-     * % and _ are wildcards in LIKE. Bound parameters stop injection but not
-     * a caller passing '%' to match every row.
+     * % and _ are wildcards in LIKE. Bound parameters stop injection but not a
+     * caller passing '%' to match every row.
+     *
+     * Paired with the ESCAPE '!' clause at the call site — the escaping is
+     * inert without one. '!' itself is escaped first, or a term containing it
+     * would produce a dangling escape.
      */
     private function escapeLike(string $value): string
     {
-        return str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], $value);
+        return str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $value);
     }
 }

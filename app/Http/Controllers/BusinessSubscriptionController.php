@@ -7,6 +7,7 @@ use App\Models\UserSubscription;
 use App\Models\User;
 use App\Models\Payment;
 use App\Services\StripeWebhookService;
+use App\Support\BusinessResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -257,6 +258,11 @@ class BusinessSubscriptionController extends Controller
                 $user->update(['role' => 'business']);
             }
 
+            // And that a businesses row exists. Without one, MySQL rejects
+            // every claim against this account's coupons — claimed_coupons
+            // .business_id has a foreign key to businesses.
+            BusinessResolver::ensureFor($user);
+
             return response()->json([
                 'status' => 'success',
                 'message' => 'Subscription created successfully',
@@ -366,10 +372,13 @@ class BusinessSubscriptionController extends Controller
             ],
         ]);
 
-        // Ensure role set to business
+        // Ensure role set to business, and that a businesses row exists —
+        // see the note in createSubscription().
         if ($user->role !== 'business') {
             $user->update(['role' => 'business']);
         }
+
+        BusinessResolver::ensureFor($user);
 
         return response()->json([
             'status' => 'success',

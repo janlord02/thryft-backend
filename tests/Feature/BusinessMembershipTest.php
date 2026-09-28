@@ -142,7 +142,12 @@ class BusinessMembershipTest extends TestCase
         [$business, $owner] = $this->paidBusiness();
         $manager = $this->memberOf($business, 'manager');
 
-        UserSubscription::where('user_id', $owner->id)->update(['status' => 'cancelled']);
+        // Past the paid period, not merely cancelled — a mid-period
+        // cancellation keeps access until the period ends.
+        UserSubscription::where('user_id', $owner->id)->update([
+            'status' => 'cancelled',
+            'ends_at' => now()->subDay(),
+        ]);
 
         $this->actingAs($manager, 'sanctum')
             ->getJson('/api/coupons')

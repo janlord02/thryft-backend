@@ -30,6 +30,13 @@ class BusinessAnalytics
     ) {
     }
 
+    /**
+     * Longest span the timeseries will build. timeseries() emits one array
+     * entry per day, so an unbounded range (?from=1000-01-01) would build
+     * hundreds of thousands of rows and exhaust memory on a single request.
+     */
+    private const MAX_DAYS = 366;
+
     public static function for(Business $business, ?string $from = null, ?string $to = null): self
     {
         // Default to the trailing 30 days, inclusive of today.
@@ -39,6 +46,12 @@ class BusinessAnalytics
         // Tolerate a reversed range rather than silently returning nothing.
         if ($start->greaterThan($end)) {
             [$start, $end] = [$end->startOfDay(), $start->endOfDay()];
+        }
+
+        // Clamp from the END, so an over-long range returns the most recent
+        // window rather than an arbitrary old one.
+        if ($start->diffInDays($end) >= self::MAX_DAYS) {
+            $start = $end->subDays(self::MAX_DAYS - 1)->startOfDay();
         }
 
         return new self($business, $start, $end);

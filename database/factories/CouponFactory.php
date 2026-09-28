@@ -2,7 +2,9 @@
 
 namespace Database\Factories;
 
+use App\Models\Coupon;
 use App\Models\User;
+use App\Support\BusinessResolver;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Str;
 
@@ -33,6 +35,31 @@ class CouponFactory extends Factory
             'is_active' => true,
             'is_featured' => false,
         ];
+    }
+
+    /**
+     * Every business account has a businesses row in production —
+     * BusinessResolver::ensureFor() provisions one at registration, and the
+     * backfill covered everyone earlier. Factories must match, or tests run
+     * against data that cannot exist: on MySQL, claimed_coupons.business_id
+     * has a foreign key to businesses, so a coupon with no business row
+     * cannot be claimed at all.
+     */
+    public function configure(): static
+    {
+        return $this->afterCreating(function (Coupon $coupon) {
+            if ($coupon->business_id !== null) {
+                return;
+            }
+
+            $owner = User::find($coupon->user_id);
+
+            if ($owner) {
+                $coupon->forceFill([
+                    'business_id' => BusinessResolver::ensureFor($owner)->id,
+                ])->saveQuietly();
+            }
+        });
     }
 
     public function expired(): static

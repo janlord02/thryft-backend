@@ -135,14 +135,24 @@ Route::middleware('maintenance')->group(function () {
         // Nearby businesses route (for all authenticated users)
         Route::get('/nearby-businesses', [UserDashboardController::class, 'nearbyBusinesses']);
         Route::get('/business/{businessId}/products', [UserDashboardController::class, 'businessProducts']);
+        // Customer-side: claiming and viewing your own coupons.
         Route::post('/coupons/claim', [UserDashboardController::class, 'claimCoupon'])->middleware('throttle:claim');
         Route::get('/coupons/claimed', [UserDashboardController::class, 'getClaimedCoupons']);
-        Route::post('/coupons/validate-scan', [UserDashboardController::class, 'validateScan']);
-        Route::post('/coupons/validate-qr-direct', [UserDashboardController::class, 'validateQRDirect']);
-        Route::post('/coupons/validate-manual', [UserDashboardController::class, 'validateManual']);
-        Route::post('/coupons/validate-specific', [UserDashboardController::class, 'validateSpecificCustomer']);
-        Route::post('/coupons/search-customers', [UserDashboardController::class, 'searchCustomers']);
-        Route::post('/coupons/mark-as-used', [UserDashboardController::class, 'markAsUsed'])->middleware('throttle:redeem');
+
+        // Business-side: the till. These sat in the plain auth:sanctum block,
+        // outside both the subscription gate and the ability gate — so a
+        // business whose subscription had lapsed was blocked from managing
+        // offers but could still redeem indefinitely, and the
+        // business.redeem ability was never enforced on the endpoints that
+        // actually redeem.
+        Route::middleware('business:business.redeem')->group(function () {
+            Route::post('/coupons/validate-scan', [UserDashboardController::class, 'validateScan']);
+            Route::post('/coupons/validate-qr-direct', [UserDashboardController::class, 'validateQRDirect']);
+            Route::post('/coupons/validate-manual', [UserDashboardController::class, 'validateManual']);
+            Route::post('/coupons/validate-specific', [UserDashboardController::class, 'validateSpecificCustomer']);
+            Route::post('/coupons/search-customers', [UserDashboardController::class, 'searchCustomers']);
+            Route::post('/coupons/mark-as-used', [UserDashboardController::class, 'markAsUsed'])->middleware('throttle:redeem');
+        });
 
         // Product favorites
         Route::post('/products/favorite', [UserDashboardController::class, 'toggleProductFavorite']);
@@ -282,10 +292,12 @@ Route::middleware('maintenance')->group(function () {
         // thing that grants access, membership is — which is what allows staff
         // accounts without sharing the owner's login.
         //
-        // The group requires only business context; each prefix below then
-        // declares the ability it actually needs, so a 'staff' member can
-        // redeem at the till without being able to edit what is on offer.
-        Route::middleware('business')->group(function () {
+        // Each prefix below declares the ability it needs, so a 'staff' member
+        // can redeem at the till without being able to edit what is on offer.
+        // No bare 'business' on this group: Laravel dedupes middleware by exact
+        // string, so 'business' and 'business:<ability>' both run, doubling
+        // every resolution and entitlement query per request.
+        Route::group([], function () {
             // Merchant dashboard. Separate ability from manage_offers so a
             // manager can see the numbers without being able to edit billing,
             // and so analytics can later be withheld on cheaper plans.

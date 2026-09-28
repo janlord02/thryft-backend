@@ -2,9 +2,12 @@
 
 namespace Tests\Feature;
 
+use App\Models\Business;
+use App\Models\BusinessMember;
 use App\Models\ClaimedCoupon;
 use App\Models\Coupon;
 use App\Models\User;
+use App\Models\UserSubscription;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Tests\TestCase;
@@ -33,15 +36,30 @@ class CouponRedeemTest extends TestCase
      */
     private function scenario(array $couponState = [], array $claimState = []): array
     {
-        $coupon = Coupon::factory()->create($couponState);
-        $business = User::find($coupon->user_id);
+        $owner = User::factory()->create(['role' => 'business']);
+
+        // The till endpoints now sit behind business:business.redeem, so the
+        // shop has to actually exist and be paid up — previously they were
+        // reachable by any authenticated user, which is the hole this closes.
+        UserSubscription::factory()->create(['user_id' => $owner->id]);
+        $shop = Business::factory()->forOwner($owner)->create();
+        BusinessMember::factory()->owner()->create([
+            'business_id' => $shop->id,
+            'user_id' => $owner->id,
+        ]);
+
+        $coupon = Coupon::factory()->create(array_merge([
+            'user_id' => $owner->id,
+            'business_id' => $shop->id,
+        ], $couponState));
+
         $customer = User::factory()->create();
 
         $claim = ClaimedCoupon::factory()
             ->forCoupon($coupon, $customer)
             ->create($claimState);
 
-        return [$business, $coupon, $claim];
+        return [$owner, $coupon, $claim];
     }
 
     public function test_business_can_redeem_a_claimed_coupon()
@@ -115,10 +133,13 @@ class CouponRedeemTest extends TestCase
 
     public function test_another_business_cannot_redeem_someone_elses_claim()
     {
-        [$business, $coupon, $claim] = $this->scenario();
-        $otherBusiness = User::factory()->create(['role' => 'business']);
+        [, , $claim] = $this->scenario();
 
-        $this->redeem($otherBusiness, $claim->id)
+        // A fully set-up rival shop, so this tests ownership scoping rather
+        // than tripping the paywall on an account with no business.
+        [$otherOwner] = $this->scenario();
+
+        $this->redeem($otherOwner, $claim->id)
             ->assertStatus(404)
             ->assertJsonPath('code', 'not_redeemable');
 
@@ -160,9 +181,9 @@ class CouponRedeemTest extends TestCase
 
     public function test_claimed_coupon_id_is_validated()
     {
-        $business = User::factory()->create(['role' => 'business']);
+        [$owner] = $this->scenario();
 
-        $this->redeem($business, null)
+        $this->redeem($owner, null)
             ->assertStatus(422)
             ->assertJsonValidationErrors(['claimedCouponId']);
     }
