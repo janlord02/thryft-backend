@@ -7,8 +7,40 @@ on:
 
 jobs:
   test:
-    name: PHPUnit
+    # Runs the suite against BOTH engines.
+    #
+    # sqlite is fast and is what phpunit.xml pins by default, but it cannot
+    # represent production: SQLite ignores ALTER of a foreign key, so
+    # claimed_coupons.business_id still points at `users` there while MySQL
+    # points at `businesses`. Three real bugs — a fatal FK violation on every
+    # claim for newly-provisioned businesses, an implicit ON UPDATE
+    # CURRENT_TIMESTAMP silently resetting subscription start dates, and an
+    # ESCAPE clause that is a syntax error on MySQL — were all invisible under
+    # sqlite and only surfaced when the suite was run against MySQL.
+    #
+    # mysql is therefore not optional here. If it is ever made so, expect that
+    # class of bug to reach production again.
+    name: PHPUnit (${{ matrix.db }})
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, mysql]
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: thryft_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
 
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +50,7 @@ jobs:
         with:
           # Must stay in sync with composer.json's "php": "^8.2" constraint.
           php-version: '8.2'
-          extensions: mbstring, pdo, pdo_sqlite, bcmath, gd, intl, zip
+          extensions: mbstring, pdo, pdo_sqlite, pdo_mysql, bcmath, gd, intl, zip
           coverage: none
 
       - name: Cache Composer packages
@@ -36,7 +68,49 @@ jobs:
           cp .env.example .env
           php artisan key:generate
 
-      # phpunit.xml pins the suite to sqlite :memory:, so no database service
-      # is needed here.
+      # The env vars below override phpunit.xml's <env> entries, which are not
+      # forced. On the sqlite leg nothing is set, so phpunit.xml's :memory:
+      # default applies.
+      - name: Run tests (sqlite)
+        if: matrix.db == 'sqlite'
+        run: php artisan test
+
+      - name: Run tests (mysql)
+        if: matrix.db == 'mysql'
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: thryft_test
+          DB_USERNAME: root
+          DB_PASSWORD: ''
+        run: php artisan test
+
+  # The business-entity rollout is behind a flag, so both positions have to
+  # stay green — otherwise flipping it in production is untested.
+  flag:
+    name: PHPUnit (business-entity flag on)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, pdo, pdo_sqlite, bcmath, gd, intl, zip
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
       - name: Run tests
+        env:
+          THRYFT_USE_BUSINESS_ENTITY: 'true'
         run: php artisan test
