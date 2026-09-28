@@ -1,19 +1,8 @@
 @extends('public.layout')
 
-@php
-    $biz = (new \App\Http\Resources\PublicBusinessResource($business))->toArray(request());
-    $deal = (new \App\Http\Resources\PublicCouponResource($coupon))->toArray(request());
-    $summary = $deal['description']
-        ? \Illuminate\Support\Str::limit(strip_tags($deal['description']), 155)
-        : $deal['formatted_discount'] . ' off at ' . $biz['name'] . '. Claim on Thryft.';
-@endphp
-
-@section('title', $deal['title'] . ' at ' . $biz['name'] . ' — Thryft')
-@section('meta_description', $summary)
-@section('og_type', 'product')
-@if($deal['banner_url'] ?? $biz['logo_url'])
-    @section('og_image', $deal['banner_url'] ?? $biz['logo_url'])
-@endif
+{{-- $biz, $deal and the meta* variables come from BusinessPageController.
+     Metadata is passed as variables, not sections, because @yield is
+     unescaped — see the note in public/layout.blade.php. --}}
 
 @push('structured_data')
 {{-- schema.org Offer, linked back to the seller so the deal and the business
@@ -34,7 +23,7 @@
         'url' => route('public.business', ['business' => $business->slug]),
         'telephone' => $biz['phone'],
     ]),
-]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) !!}
+]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}
 </script>
 @endpush
 

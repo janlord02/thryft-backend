@@ -241,11 +241,31 @@ class BusinessDashboardTest extends TestCase
     public function test_unsubscribed_business_cannot_view_analytics()
     {
         [, $owner] = $this->paidBusiness();
-        UserSubscription::where('user_id', $owner->id)->update(['status' => 'cancelled']);
+
+        // Cancelling alone no longer revokes — the customer keeps the period
+        // they paid for. Access ends when that period does.
+        UserSubscription::where('user_id', $owner->id)->update([
+            'status' => 'cancelled',
+            'ends_at' => now()->subDay(),
+        ]);
 
         $this->actingAs($owner, 'sanctum')
             ->getJson('/api/business/dashboard/analytics')
             ->assertStatus(402);
+    }
+
+    public function test_cancelled_business_keeps_access_until_the_paid_period_ends()
+    {
+        [, $owner] = $this->paidBusiness();
+
+        UserSubscription::where('user_id', $owner->id)->update([
+            'status' => 'cancelled',
+            'ends_at' => now()->addWeek(),
+        ]);
+
+        $this->actingAs($owner, 'sanctum')
+            ->getJson('/api/business/dashboard/analytics')
+            ->assertStatus(200);
     }
 
     // -----------------------------------------------------------------

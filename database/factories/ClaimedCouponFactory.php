@@ -46,7 +46,8 @@ class ClaimedCouponFactory extends Factory
         return $this->state(fn () => [
             'user_id' => $customer?->id ?? User::factory(),
             'coupon_id' => $coupon->id,
-            'business_id' => $coupon->user_id,
+            // Mirrors claimCoupon(): the coupon's BUSINESS, not its creator.
+            'business_id' => $coupon->business_id ?? $coupon->user_id,
             'coupon_code' => $coupon->code,
             'coupon_title' => $coupon->title,
             'coupon_description' => $coupon->description,

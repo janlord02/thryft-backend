@@ -35,7 +35,13 @@ return new class extends Migration {
                 'name' => $name,
                 'description' => $user->business_description ?? null,
                 'phone' => $user->phone ?? null,
-                'email' => $user->email,
+                // NOT $user->email. businesses.email is a PUBLISHED contact
+                // address, surfaced to anonymous callers by
+                // PublicBusinessResource; users.email is the account login.
+                // Copying it here would republish every existing owner's login
+                // on the public API — the exact leak the resource layer exists
+                // to prevent. Merchants fill this in themselves.
+                'email' => null,
                 'status' => 'active',
                 'created_at' => $user->created_at ?? now(),
                 'updated_at' => now(),

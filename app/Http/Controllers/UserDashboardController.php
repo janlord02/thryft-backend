@@ -584,7 +584,16 @@ class UserDashboardController extends Controller
                     $claim = ClaimedCoupon::create([
                         'user_id' => $user->id,
                         'coupon_id' => $coupon->id,
-                        'business_id' => $coupon->user_id,
+                        // The coupon's BUSINESS, not whoever created it. Using
+                        // $coupon->user_id only worked while business ids were
+                        // aliased to owner user ids by the backfill: a business
+                        // created afterwards has id >= 1,000,000, so the claim
+                        // would be filed under the owner's user id and every
+                        // till lookup (which resolves a businesses.id) would
+                        // miss it — and on MySQL the FK to businesses would
+                        // reject the insert outright. Same divergence when a
+                        // staff member creates the coupon.
+                        'business_id' => $coupon->business_id ?? $coupon->user_id,
                         'product_id' => $productId,
                         'coupon_code' => $coupon->code,
                         'coupon_title' => $coupon->title,

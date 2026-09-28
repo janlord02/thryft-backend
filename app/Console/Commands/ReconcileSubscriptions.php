@@ -117,6 +117,15 @@ class ReconcileSubscriptions extends Command
                 $attributes['grace_ends_at'] = null;
             }
 
+            // Mirror StripeWebhookService::onInvoicePaymentFailed. Without
+            // this, reconciling a past_due subscription left grace_ends_at
+            // null, grantsAccess() denies past_due with no grace, and the
+            // customer was locked out on the first failed invoice — in exactly
+            // the missed-webhook scenario this command exists to cover.
+            if ($status === 'past_due') {
+                $attributes['grace_ends_at'] = $subscription->grace_ends_at ?? now()->addDays(7);
+            }
+
             if ($status === 'cancelled') {
                 $attributes['cancelled_at'] = $subscription->cancelled_at ?? now();
             }

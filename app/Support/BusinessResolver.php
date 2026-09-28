@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Business;
+use App\Models\BusinessMember;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -89,6 +90,56 @@ class BusinessResolver
         }
 
         return static::forUser($user);
+    }
+
+    /**
+     * Guarantee this user has a business, creating one (with an owner
+     * membership) if they do not.
+     *
+     * Call this wherever an account becomes a business. The Phase 3a backfill
+     * only covered users who were businesses AT THAT MOMENT; nothing created a
+     * row for anyone promoted afterwards. On MySQL that is not a soft gap —
+     * claimed_coupons.business_id has a foreign key to businesses, so every
+     * claim against such an account's coupons fails outright. SQLite keeps the
+     * old FK to users, which is why the test suite could not see it.
+     */
+    public static function ensureFor(User $user): Business
+    {
+        $business = static::forUser($user);
+
+        if (!$business) {
+            $business = Business::create([
+                'owner_user_id' => $user->id,
+                'name' => $user->business_name ?: ($user->name ?: 'Business ' . $user->id),
+                'description' => $user->business_description,
+                'phone' => $user->phone,
+                // NOT $user->email — that is the account login, and
+                // businesses.email is published publicly.
+                'email' => null,
+                'status' => 'active',
+            ]);
+
+            // Carry across whatever address the user record holds, so the
+            // business is not location-less on its public page.
+            $business->locations()->create([
+                'label' => 'Main',
+                'address' => $user->address,
+                'city' => $user->city,
+                'state' => $user->state,
+                'zipcode' => $user->zipcode,
+                'country' => $user->country,
+                'latitude' => $user->latitude,
+                'longitude' => $user->longitude,
+                'is_primary' => true,
+            ]);
+        }
+
+        BusinessMember::firstOrCreate(
+            ['business_id' => $business->id, 'user_id' => $user->id],
+            ['role' => 'owner', 'status' => 'active', 'invited_at' => now(), 'accepted_at' => now()],
+        );
+
+        return $business;
     }
 
     /**

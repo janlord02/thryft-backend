@@ -59,9 +59,16 @@ return new class extends Migration {
     }
 
     /**
-     * SQLite cannot alter foreign keys in place, and rebuilding the table there
-     * buys nothing: its FK enforcement is off by default in Laravel's test
-     * setup. Skip it rather than risk a destructive table rebuild.
+     * SQLite cannot alter a foreign key in place, and rebuilding the table to
+     * do so would be a destructive copy for no production benefit.
+     *
+     * KNOWN CONSEQUENCE: under SQLite, claimed_coupons.business_id keeps its
+     * original foreign key to `users`, while on MySQL it points at
+     * `businesses`. The test schema therefore differs from production, and the
+     * suite cannot exercise a business id outside the users range — which is
+     * every business created after the backfill bumped AUTO_INCREMENT to
+     * 1,000,000. Anything depending on that case has to be verified against
+     * MySQL directly.
      */
     private function repointClaimedCouponsForeignKey(): void
     {

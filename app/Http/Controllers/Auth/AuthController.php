@@ -7,6 +7,7 @@ use App\Exceptions\TwoFactorDeliveryException;
 use App\Models\User;
 use App\Models\Setting;
 use App\Services\ActivityService;
+use App\Support\BusinessResolver;
 use App\Mail\TwoFactorCodeMail;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -182,6 +183,12 @@ class AuthController extends Controller
             'latitude' => $request->latitude,
             'longitude' => $request->longitude,
         ]);
+
+        // Provision the businesses row and owner membership up front. Without
+        // one, MySQL rejects every claim against this account's coupons —
+        // claimed_coupons.business_id has a foreign key to businesses — and
+        // the account has no public page.
+        BusinessResolver::ensureFor($user);
 
         // Check if email verification is required
         $emailVerificationRequired = Setting::getValue('email_verification', true);

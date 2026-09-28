@@ -1,25 +1,16 @@
 @extends('public.layout')
 
 @php
-    $public = (new \App\Http\Resources\PublicBusinessResource($business))->toArray(request());
+    // $public, $metaTitle, $metaDescription, $ogType and $ogImage come from
+    // BusinessPageController. Metadata is NOT declared as sections: the layout
+    // renders it with {{ }}, because @yield is unescaped.
     $location = $public['location'] ?? null;
-    $summary = $public['description']
-        ? \Illuminate\Support\Str::limit(strip_tags($public['description']), 155)
-        : trim(($public['name'] ?? 'This business') . ' on Thryft'
-            . ($location && $location['city'] ? ' — ' . $location['city'] : '')
-            . '. See current deals and offers.');
 @endphp
-
-@section('title', $public['name'] . ' — Thryft')
-@section('meta_description', $summary)
-@section('og_type', 'business.business')
-@if($public['cover_url'] ?? $public['logo_url'])
-    @section('og_image', $public['cover_url'] ?? $public['logo_url'])
-@endif
 
 @push('structured_data')
 {{-- schema.org LocalBusiness: lets search engines read the address, contact
-     details and current offers as data rather than inferring them. --}}
+     details and current offers as data rather than inferring them.
+     json_encode escapes </script> via JSON_HEX_TAG, so user text is safe here. --}}
 <script type="application/ld+json">
 {!! json_encode(array_filter([
     '@context' => 'https://schema.org',
@@ -49,7 +40,7 @@
         'url' => route('public.deal', ['business' => $business->slug, 'couponSlug' => $c->slug]),
         'availabilityEnds' => optional($c->expires_at)->toIso8601String(),
     ]))->values()->all(),
-]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) !!}
+]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}
 </script>
 @endpush
 

@@ -150,6 +150,14 @@ class UserSubscription extends Model
             return $this->grace_ends_at !== null && $this->grace_ends_at > now();
         }
 
+        // A cancellation takes effect at the end of the period already paid
+        // for. cancel() writes ends_at = current_period_end for exactly this
+        // reason; without this branch that write was never consulted and a
+        // customer who cancelled on the 5th lost the 25 days they had bought.
+        if ($this->status === 'cancelled') {
+            return $this->ends_at !== null && $this->ends_at > now();
+        }
+
         return false;
     }
 
@@ -171,6 +179,11 @@ class UserSubscription extends Model
                     $q->where('status', 'past_due')
                         ->whereNotNull('grace_ends_at')
                         ->where('grace_ends_at', '>', now());
+                })->orWhere(function ($q) {
+                    // Cancelled but still inside the paid period.
+                    $q->where('status', 'cancelled')
+                        ->whereNotNull('ends_at')
+                        ->where('ends_at', '>', now());
                 });
             });
     }
