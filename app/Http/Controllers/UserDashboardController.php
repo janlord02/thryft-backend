@@ -163,8 +163,12 @@ class UserDashboardController extends Controller
             // Apply pagination
             $businesses = $query->skip($offset)->take($limit)->get();
 
+            $savedIds = $request->user()
+                ? $request->user()->favoriteBusinesses()->pluck('users.id')->all()
+                : [];
+
             // Format the response
-            $formattedBusinesses = $businesses->map(function ($business) {
+            $formattedBusinesses = $businesses->map(function ($business) use ($savedIds) {
                 $businessData = [
                     'id' => $business->id,
                     'name' => $business->name,
@@ -181,6 +185,10 @@ class UserDashboardController extends Controller
                     'longitude' => $business->longitude,
                     'profile_image_url' => $business->profile_image_url,
                     'distance' => round($business->distance, 2),
+                    'is_favorite' => in_array($business->id, $savedIds, true),
+                    // Businesses have no category column; this is derived from
+                    // their products, the same way the business page does it.
+                    'category_name' => $this->resolveBusinessCategoryName($business),
                     'created_at' => $business->created_at,
                     'updated_at' => $business->updated_at,
                     'coupons' => $business->coupons->map(function ($coupon) {
@@ -484,6 +492,9 @@ class UserDashboardController extends Controller
                         'name' => $business->name,
                         'business_name' => $business->business_name,
                         'business_description' => $business->business_description,
+                        'is_favorite' => $user
+                            ? $user->favoriteBusinesses()->whereKey($business->id)->exists()
+                            : false,
                         'email' => $business->email,
                         'phone' => $business->phone,
                         'address' => $business->address,
@@ -1509,10 +1520,13 @@ class UserDashboardController extends Controller
             $page = $request->get('page', 1);
             $limit = $request->get('limit', 12);
 
-            // Get businesses that have products favorited by the user
-            $favoriteBusinesses = User::whereHas('products', function ($query) use ($user) {
-                $query->whereHas('favoritedBy', function ($subQuery) use ($user) {
-                    $subQuery->where('user_id', $user->id);
+            // Businesses the shopper saved outright, plus those with a
+            // favorited product — the latter predates business_favorites.
+            $favoriteBusinesses = User::where(function ($query) use ($user) {
+                $query->whereHas('favoritedByShoppers', function ($subQuery) use ($user) {
+                    $subQuery->where('business_favorites.user_id', $user->id);
+                })->orWhereHas('products.favoritedBy', function ($subQuery) use ($user) {
+                    $subQuery->where('product_favorites.user_id', $user->id);
                 });
             })
                 ->with([
@@ -1589,10 +1603,10 @@ class UserDashboardController extends Controller
             $business = User::findOrFail($businessId);
 
             if ($action === 'remove') {
-                // Remove all products from this business from favorites
-                $business->products()->each(function ($product) use ($user) {
-                    $user->favoriteProducts()->detach($product->id);
-                });
+                $user->favoriteBusinesses()->detach($business->id);
+                // A business also counts as favorited through its products,
+                // so those go too or it would reappear in the list.
+                $user->favoriteProducts()->detach($business->products()->pluck('id')->all());
 
                 return response()->json([
                     'status' => 'success',
@@ -1601,14 +1615,17 @@ class UserDashboardController extends Controller
                         'is_favorite' => false,
                     ],
                 ]);
-            } else {
-                // For 'add' action, we don't add the business itself to favorites
-                // Instead, we would need to add specific products
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Cannot add business to favorites directly. Please favorite specific products.',
-                ], 400);
             }
+
+            $user->favoriteBusinesses()->syncWithoutDetaching([$business->id]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Business saved to favorites',
+                'data' => [
+                    'is_favorite' => true,
+                ],
+            ]);
 
         } catch (\Exception $e) {
             return response()->json([
