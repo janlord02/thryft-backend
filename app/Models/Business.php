@@ -105,6 +105,25 @@ class Business extends Model
     }
 
     /**
+     * The users-table names that code written before the extraction reads
+     * off a claimed coupon's business. Kept so those readers keep working
+     * now that the relation resolves to a Business.
+     */
+    public function getBusinessNameAttribute(): ?string
+    {
+        return $this->name;
+    }
+
+    public function getProfileImageUrlAttribute(): ?string
+    {
+        if ($this->logo_path) {
+            return asset('storage/' . $this->logo_path);
+        }
+
+        return $this->owner?->profile_image_url;
+    }
+
+    /**
      * Slugs become public URL segments in Phase 4, so they must be unique.
      * Probe for a free suffix rather than assuming; unlike the backfill, there
      * is no id available yet at creation time.
