@@ -150,6 +150,7 @@ class Subscription extends Model
     public function getBillingCycleLabelAttribute(): string
     {
         return match ($this->billing_cycle) {
+            'free' => 'free',
             'monthly' => 'per month',
             'yearly' => 'per year',
             'lifetime' => 'one-time',

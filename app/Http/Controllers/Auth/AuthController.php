@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Exceptions\TwoFactorDeliveryException;
 use App\Models\User;
 use App\Models\Setting;
 use App\Services\ActivityService;
+use App\Support\BusinessResolver;
 use App\Mail\TwoFactorCodeMail;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -16,6 +18,7 @@ use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 class AuthController extends Controller
 {
@@ -181,6 +184,12 @@ class AuthController extends Controller
             'longitude' => $request->longitude,
         ]);
 
+        // Provision the businesses row and owner membership up front. Without
+        // one, MySQL rejects every claim against this account's coupons —
+        // claimed_coupons.business_id has a foreign key to businesses — and
+        // the account has no public page.
+        BusinessResolver::ensureFor($user);
+
         // Check if email verification is required
         $emailVerificationRequired = Setting::getValue('email_verification', true);
 
@@ -249,10 +258,10 @@ class AuthController extends Controller
 
             // Check if 2FA is enabled for the user
             if ($user->two_factor_enabled) {
-                // Generate and send 2FA code
-                $code = $this->generateAndSendTwoFactorCode($user);
+                $code = $this->generateTwoFactorCode();
 
-                // Store 2FA data in cache for 2 minutes
+                // Store 2FA data in cache for 2 minutes.
+                // This MUST happen before delivery is attempted — see sendTwoFactorCode().
                 $cacheKey = "2fa_{$user->id}_{$user->email}";
                 $cacheData = [
                     'user_id' => $user->id,
@@ -267,8 +276,10 @@ class AuthController extends Controller
                     'user_id' => $user->id,
                     'email' => $user->email,
                     'cache_key' => $cacheKey,
-                    'cache_data' => $cacheData
                 ]);
+
+                // Throws TwoFactorDeliveryException, caught below as a 503.
+                $this->sendTwoFactorCode($user, $code);
 
                 return response()->json([
                     'status' => 'success',
@@ -312,6 +323,15 @@ class AuthController extends Controller
                     'requires_2fa' => false,
                 ],
             ]);
+        } catch (TwoFactorDeliveryException $e) {
+            // Credentials were correct and the code is cached — only delivery failed.
+            // Must be caught before the generic handler below, which would otherwise
+            // report a mail outage as a login failure.
+            return response()->json([
+                'status' => 'error',
+                'message' => 'We could not send your verification code right now. Please try again in a moment.',
+                'code' => 'two_factor_delivery_failed',
+            ], 503);
         } catch (\Exception $e) {
             Log::error('Login error: ' . $e->getMessage());
             return response()->json([
@@ -497,10 +517,10 @@ class AuthController extends Controller
                 ], 401);
             }
 
-            // Generate and send new 2FA code
-            $code = $this->generateAndSendTwoFactorCode($user);
+            $code = $this->generateTwoFactorCode();
 
-            // Update cache with new code
+            // Update cache with new code BEFORE attempting delivery, so a mail
+            // outage leaves a usable code rather than invalidating the session.
             $cacheData = [
                 'user_id' => $user->id,
                 'code' => $code,
@@ -509,6 +529,8 @@ class AuthController extends Controller
             ];
 
             Cache::put($cacheKey, $cacheData, 120); // 2 minutes
+
+            $this->sendTwoFactorCode($user, $code);
 
             Log::info('2FA code resent successfully', [
                 'user_id' => $user->id,
@@ -520,6 +542,12 @@ class AuthController extends Controller
                 'status' => 'success',
                 'message' => '2FA code resent successfully',
             ]);
+        } catch (TwoFactorDeliveryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'We could not send your verification code right now. Please try again in a moment.',
+                'code' => 'two_factor_delivery_failed',
+            ], 503);
         } catch (\Exception $e) {
             Log::error('Resend 2FA code error: ' . $e->getMessage());
             return response()->json([
@@ -530,17 +558,40 @@ class AuthController extends Controller
     }
 
     /**
-     * Generate and send 2FA code
+     * Generate a 6-digit 2FA code.
+     *
+     * Deliberately separate from delivery so callers can persist the code to
+     * the cache BEFORE attempting to send it. When these were fused, an SMTP
+     * failure threw before Cache::put ever ran, so no code existed and the
+     * user was locked out entirely rather than merely undelivered.
      */
-    private function generateAndSendTwoFactorCode(User $user): string
+    private function generateTwoFactorCode(): string
     {
-        // Generate 6-digit code
-        $code = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        return str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    }
 
-        // Send email with code
-        Mail::to($user->email)->send(new TwoFactorCodeMail($code, $user->name));
+    /**
+     * Deliver a previously-cached 2FA code by email.
+     *
+     * Sent synchronously on purpose: queueing this is the right end state, but
+     * no queue worker runs in production yet, so ShouldQueue would silently
+     * drop every code. Revisit once supervisor is running queue:work.
+     *
+     * @throws TwoFactorDeliveryException
+     */
+    private function sendTwoFactorCode(User $user, string $code): void
+    {
+        try {
+            Mail::to($user->email)->send(new TwoFactorCodeMail($code, $user->name));
+        } catch (\Throwable $e) {
+            Log::error('2FA code delivery failed', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'error' => $e->getMessage(),
+            ]);
 
-        return $code;
+            throw new TwoFactorDeliveryException('Unable to deliver the two-factor code.', 0, $e);
+        }
     }
 
     /**
@@ -693,7 +744,7 @@ class AuthController extends Controller
     /**
      * Update business profile
      */
-    public function updateBusinessProfile(Request $request): JsonResponse
+public function updateBusinessProfile(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'firstname' => 'required|string|max:255',
@@ -708,6 +759,8 @@ class AuthController extends Controller
             'country' => 'required|string|max:255',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
+            'business_tags' => 'nullable|array',
+            'business_tags.*' => 'exists:business_tags,id',
         ]);
 
         if ($validator->fails()) {
@@ -744,11 +797,42 @@ class AuthController extends Controller
             'longitude'
         ]));
 
+        // Sync business tags (only if table exists)
+        if ($request->has('business_tags')) {
+            try {
+                if (Schema::hasTable('business_tags') && 
+                    Schema::hasTable('business_assign_tags')) {
+                    $user->businessTags()->sync($request->business_tags);
+                    
+                    // Update usage counts
+                    \App\Models\BusinessTag::whereIn('id', $request->business_tags)->each(function ($tag) {
+                        $tag->incrementUsage();
+                    });
+                }
+            } catch (\Exception $e) {
+                // Table might not exist yet (migrations not run)
+                // Log error but don't fail the request
+                \Log::warning('Failed to sync business tags (table may not exist): ' . $e->getMessage());
+            }
+        }
+
+        // Try to load businessTags, but don't fail if table doesn't exist yet
+        $freshUser = $user->fresh();
+        try {
+            if (Schema::hasTable('business_tags') && 
+                Schema::hasTable('business_assign_tags')) {
+                $freshUser->load('businessTags');
+            }
+        } catch (\Exception $e) {
+            // Table might not exist yet (migrations not run)
+            // Continue without business tags
+        }
+
         return response()->json([
             'status' => 'success',
             'message' => 'Business profile updated successfully',
             'data' => [
-                'user' => $user->fresh()
+                'user' => $freshUser
             ]
         ]);
     }

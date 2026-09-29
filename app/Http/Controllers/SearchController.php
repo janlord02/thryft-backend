@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use App\Http\Resources\PublicBusinessResource;
 use App\Models\User;
 use App\Models\Product;
 use App\Models\Coupon;
@@ -97,19 +98,29 @@ class SearchController extends Controller
                         ->whereBetween('longitude', [$minLng, $maxLng]);
                 }
 
+                // This endpoint is UNAUTHENTICATED. It previously returned
+                // $business->email — which is users.email, the owner's account
+                // login, not a published contact address. That handed out a
+                // credential-stuffing target and a scrapeable spam list to
+                // anyone who called /api/search.
+                //
+                // Routed through the allowlist resource so adding a column to
+                // users can never silently publish it. The legacy keys below
+                // are preserved so the existing frontend keeps working.
                 $results['businesses'] = $businessQuery->limit($limit)->get()->map(function ($business) {
+                    $public = (new PublicBusinessResource($business))->toArray(request());
+
                     return [
-                        'id' => $business->id,
-                        'name' => $business->business_name ?: $business->name,
-                        'description' => $business->business_description ?: $business->bio,
-                        'profile_image_url' => $business->profile_image_url,
-                        'address' => $business->address,
-                        'city' => $business->city,
-                        'state' => $business->state,
-                        'phone' => $business->phone,
-                        'email' => $business->email,
+                        'id' => $public['id'],
+                        'name' => $public['name'],
+                        'description' => $public['description'],
+                        'profile_image_url' => $public['logo_url'],
+                        'address' => $public['location']['address'] ?? null,
+                        'city' => $public['location']['city'] ?? null,
+                        'state' => $public['location']['state'] ?? null,
+                        'phone' => $public['phone'],
                         'distance' => null,
-                        'type' => 'business'
+                        'type' => 'business',
                     ];
                 });
             }
@@ -172,11 +183,18 @@ class SearchController extends Controller
 
             // Search coupons
             if ($type === 'all' || $type === 'coupons') {
-                $couponQuery = Coupon::with(['products.category', 'products.user', 'products.tags'])
+                $couponQuery = Coupon::with(['products.category', 'products.user', 'products.tags', 'user'])
                     ->where('is_active', true)
                     ->where(function ($q) use ($query) {
                         $q->where('code', 'LIKE', "%{$query}%")
+                            ->orWhere('title', 'LIKE', "%{$query}%")
                             ->orWhere('description', 'LIKE', "%{$query}%")
+                            ->orWhere('redeem_instructions', 'LIKE', "%{$query}%")
+                            ->orWhereHas('user', function ($businessQuery) use ($query) {
+                                $businessQuery->where('business_name', 'LIKE', "%{$query}%")
+                                    ->orWhere('name', 'LIKE', "%{$query}%")
+                                    ->orWhere('business_description', 'LIKE', "%{$query}%");
+                            })
                             ->orWhereHas('products', function ($productQuery) use ($query) {
                                 $productQuery->where('name', 'LIKE', "%{$query}%")
                                     ->orWhere('description', 'LIKE', "%{$query}%")
@@ -205,9 +223,11 @@ class SearchController extends Controller
 
                 $results['coupons'] = $couponQuery->limit($limit)->get()->map(function ($coupon) {
                     $primaryProduct = ($coupon->products && $coupon->products->count() > 0) ? $coupon->products->first() : null;
+                    $business = $coupon->user;
                     return [
                         'id' => $coupon->id,
                         'code' => $coupon->code,
+                        'title' => $coupon->title,
                         'description' => $coupon->description,
                         'banner_image_url' => $coupon->banner_image_url,
                         'discount_type' => $coupon->discount_type,
@@ -217,6 +237,11 @@ class SearchController extends Controller
                         'expires_at' => $coupon->expires_at,
                         'usage_limit' => $coupon->usage_limit,
                         'used_count' => $coupon->used_count,
+                        'business_id' => $business ? $business->id : null,
+                        'business_name' => $business ? ($business->business_name ?: $business->name) : null,
+                        'business_city' => $business ? $business->city : null,
+                        'business_state' => $business ? $business->state : null,
+                        'business_country' => $business ? $business->country : null,
                         'product' => $primaryProduct ? [
                             'id' => $primaryProduct->id,
                             'name' => $primaryProduct->name,
@@ -358,18 +383,22 @@ class SearchController extends Controller
             }
 
             $couponCodes = Coupon::where('is_active', true)
-                ->where('code', 'LIKE', "%{$query}%")
+                ->where(function ($q) use ($query) {
+                    $q->where('code', 'LIKE', "%{$query}%")
+                        ->orWhere('title', 'LIKE', "%{$query}%");
+                })
                 ->limit($limit)
-                ->pluck('code')
-                ->unique()
-                ->values();
+                ->get();
 
-            foreach ($couponCodes as $code) {
-                $suggestions[] = [
-                    'text' => $code,
-                    'type' => 'coupon',
-                    'icon' => 'local_offer'
-                ];
+            foreach ($couponCodes as $coupon) {
+                $suggestionText = $coupon->title ?: $coupon->code;
+                if (!collect($suggestions)->contains('text', $suggestionText)) {
+                    $suggestions[] = [
+                        'text' => $suggestionText,
+                        'type' => 'coupon',
+                        'icon' => 'local_offer'
+                    ];
+                }
             }
 
             $suggestions = collect($suggestions)

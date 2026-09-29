@@ -16,6 +16,16 @@ return new class extends Migration {
             return;
         }
 
+        // This migration is pure MySQL housekeeping: it drops duplicate
+        // constraints/indexes left behind by earlier migrations, discovered via
+        // INFORMATION_SCHEMA. That schema does not exist on SQLite, so without
+        // this guard the query throws and every feature test fails at migration
+        // time (phpunit.xml runs against sqlite :memory:). A fresh non-MySQL
+        // database has no duplicates to clean, so skipping is correct.
+        if (DB::connection()->getDriverName() !== 'mysql') {
+            return;
+        }
+
         $connection = DB::connection();
         $tableName = 'product_favorites';
         $databaseName = $connection->getDatabaseName();

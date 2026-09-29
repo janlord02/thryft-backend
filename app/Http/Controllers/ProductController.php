@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\Category;
 use App\Models\Tag;
+use App\Services\PlanLimits;
+use App\Support\BusinessResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -18,8 +20,8 @@ class ProductController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Product::with(['category', 'user', 'tags', 'coupons'])
-            ->byUser(Auth::id());
+        $query = Product::with(['category', 'user', 'tags', 'coupons']);
+        BusinessResolver::scopeOwnedBy($query, Auth::user());
 
         // Search functionality
         if ($request->has('search') && $request->search) {
@@ -65,9 +67,20 @@ class ProductController extends Controller
             'sort_order' => 'nullable|integer|min:0',
         ]);
 
+        // Plan quotas come from Subscription.metadata.max_products, which the
+        // seeder has always written but nothing read until now.
+        if (!app(PlanLimits::class)->canCreateProduct(Auth::user())) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You have reached the product limit for your plan. Upgrade to add more.',
+                'code' => 'plan_limit_reached',
+            ], 402);
+        }
+
         return DB::transaction(function () use ($request) {
             $data = [
-                'user_id' => Auth::id(),
+                // Dual-writes user_id and business_id; see BusinessResolver.
+                ...BusinessResolver::ownershipAttributes(Auth::user()),
                 'category_id' => $request->category_id,
                 'name' => $request->name,
                 'slug' => Str::slug($request->name),
@@ -125,7 +138,7 @@ class ProductController extends Controller
     public function show(Product $product)
     {
         // Ensure user can only access their own products
-        if ($product->user_id !== Auth::id()) {
+        if (Auth::user()->cannot('update', $product)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Product not found',
@@ -146,7 +159,7 @@ class ProductController extends Controller
     public function update(Request $request, Product $product)
     {
         // Ensure user can only update their own products
-        if ($product->user_id !== Auth::id()) {
+        if (Auth::user()->cannot('update', $product)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Product not found',
@@ -226,7 +239,7 @@ class ProductController extends Controller
     public function destroy(Product $product)
     {
         // Ensure user can only delete their own products
-        if ($product->user_id !== Auth::id()) {
+        if (Auth::user()->cannot('update', $product)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Product not found',
@@ -255,7 +268,7 @@ class ProductController extends Controller
     public function toggleStatus(Product $product)
     {
         // Ensure user can only toggle their own products
-        if ($product->user_id !== Auth::id()) {
+        if (Auth::user()->cannot('update', $product)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Product not found',
@@ -277,7 +290,7 @@ class ProductController extends Controller
     public function toggleFeatured(Product $product)
     {
         // Ensure user can only toggle their own products
-        if ($product->user_id !== Auth::id()) {
+        if (Auth::user()->cannot('update', $product)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Product not found',
