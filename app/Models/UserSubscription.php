@@ -47,6 +47,11 @@ class UserSubscription extends Model
         'payment_method',
         'transaction_id',
         'subscription_data',
+        'stripe_subscription_id',
+        'stripe_price_id',
+        'current_period_end',
+        'cancel_at_period_end',
+        'grace_ends_at',
     ];
 
     protected $casts = [
@@ -55,6 +60,9 @@ class UserSubscription extends Model
         'ends_at' => 'datetime',
         'cancelled_at' => 'datetime',
         'amount_paid' => 'decimal:2',
+        'current_period_end' => 'datetime',
+        'cancel_at_period_end' => 'boolean',
+        'grace_ends_at' => 'datetime',
     ];
 
     /**
@@ -114,6 +122,70 @@ class UserSubscription extends Model
         return $this->status === 'active' &&
             $this->starts_at <= now() &&
             ($this->ends_at === null || $this->ends_at > now());
+    }
+
+    /**
+     * Does this subscription entitle the user to business features right now?
+     *
+     * Broader than isActive() on purpose: a past_due subscription still grants
+     * access until its grace period lapses. Card declines are routine and
+     * Stripe retries them for days, so revoking on the first failed invoice
+     * would lock out paying customers over a temporary bank decline.
+     *
+     * This is the single predicate the gate middleware consults — every call
+     * site previously rebuilt the same where-clause inline and none of them
+     * knew about grace.
+     */
+    public function grantsAccess(): bool
+    {
+        if ($this->starts_at && $this->starts_at > now()) {
+            return false;
+        }
+
+        if ($this->status === 'active') {
+            return $this->ends_at === null || $this->ends_at > now();
+        }
+
+        if ($this->status === 'past_due') {
+            return $this->grace_ends_at !== null && $this->grace_ends_at > now();
+        }
+
+        // A cancellation takes effect at the end of the period already paid
+        // for. cancel() writes ends_at = current_period_end for exactly this
+        // reason; without this branch that write was never consulted and a
+        // customer who cancelled on the 5th lost the 25 days they had bought.
+        if ($this->status === 'cancelled') {
+            return $this->ends_at !== null && $this->ends_at > now();
+        }
+
+        return false;
+    }
+
+    /**
+     * Subscriptions that currently grant access — the query-side twin of
+     * grantsAccess(). Keep the two in step.
+     */
+    public function scopeGrantingAccess($query)
+    {
+        return $query
+            ->where('starts_at', '<=', now())
+            ->where(function ($outer) {
+                $outer->where(function ($q) {
+                    $q->where('status', 'active')
+                        ->where(function ($inner) {
+                            $inner->whereNull('ends_at')->orWhere('ends_at', '>', now());
+                        });
+                })->orWhere(function ($q) {
+                    $q->where('status', 'past_due')
+                        ->whereNotNull('grace_ends_at')
+                        ->where('grace_ends_at', '>', now());
+                })->orWhere(function ($q) {
+                    // Cancelled but still inside the paid period.
+                    $q->where('status', 'cancelled')
+                        ->whereNotNull('ends_at')
+                        ->where('ends_at', '>', now());
+                });
+            });
     }
 
     /**

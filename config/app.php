@@ -54,6 +54,9 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
+    // Where the Quasar SPA lives; public pages deep-link into it.
+    'frontend_url' => env('FRONTEND_URL', 'https://app.thryft.net'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

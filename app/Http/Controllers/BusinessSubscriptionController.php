@@ -6,6 +6,8 @@ use App\Models\Subscription;
 use App\Models\UserSubscription;
 use App\Models\User;
 use App\Models\Payment;
+use App\Services\StripeWebhookService;
+use App\Support\BusinessResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -32,15 +34,9 @@ class BusinessSubscriptionController extends Controller
     {
         $user = Auth::user();
 
-        $activeSubscription = UserSubscription::where('user_id', $user->id)
-            ->where('status', 'active')
-            ->where('starts_at', '<=', now())
-            ->where(function ($query) {
-                $query->whereNull('ends_at')
-                    ->orWhere('ends_at', '>', now());
-            })
-            ->with('subscription')
-            ->first();
+        // Single source of truth for "does this grant access" — it also covers
+        // past_due inside grace, which the old inline clause did not.
+        $activeSubscription = $user->activeSubscription();
 
         return response()->json([
             'status' => 'success',
@@ -58,15 +54,7 @@ class BusinessSubscriptionController extends Controller
     {
         $user = Auth::user();
 
-        $subscription = UserSubscription::where('user_id', $user->id)
-            ->where('status', 'active')
-            ->where('starts_at', '<=', now())
-            ->where(function ($query) {
-                $query->whereNull('ends_at')
-                    ->orWhere('ends_at', '>', now());
-            })
-            ->with('subscription')
-            ->first();
+        $subscription = $user->activeSubscription();
 
         if (!$subscription) {
             return response()->json([
@@ -101,6 +89,7 @@ class BusinessSubscriptionController extends Controller
                 'starts_at' => $subscription->starts_at,
                 'ends_at' => $subscription->ends_at,
                 'next_billing_date' => $subscription->ends_at,
+                'remaining_days' => $subscription->getRemainingDays(),
                 'features' => $subscription->subscription->features,
             ],
         ]);
@@ -219,10 +208,11 @@ class BusinessSubscriptionController extends Controller
                 ->where('status', 'active')
                 ->update(['status' => 'cancelled', 'cancelled_at' => now()]);
 
-            // Determine period end from Stripe
-            $currentPeriodEnd = isset($stripeSub->current_period_end)
-                ? Carbon::createFromTimestamp($stripeSub->current_period_end)
-                : now()->addMonth();
+            // Determine period end from Stripe. current_period_end moved from
+            // the subscription to the subscription ITEM in API versions from
+            // 2025-04-30, so read both before falling back — the old
+            // single-location read silently produced "now + 1 month" instead.
+            $currentPeriodEnd = $this->resolveStripePeriodEnd($stripeSub) ?? now()->addMonth();
 
             // Persist local subscription record
             $userSubscription = UserSubscription::create([
@@ -231,6 +221,10 @@ class BusinessSubscriptionController extends Controller
                 'status' => in_array($stripeSub->status, ['active', 'trialing']) ? 'active' : $stripeSub->status,
                 'starts_at' => now(),
                 'ends_at' => $currentPeriodEnd,
+                'current_period_end' => $currentPeriodEnd,
+                'stripe_subscription_id' => $stripeSub->id,
+                'stripe_price_id' => $subscriptionPlan->stripe_price_id,
+                'cancel_at_period_end' => false,
                 'amount_paid' => $subscriptionPlan->price,
                 'payment_method' => 'stripe_subscription',
                 'transaction_id' => $stripeSub->id,
@@ -264,6 +258,11 @@ class BusinessSubscriptionController extends Controller
                 $user->update(['role' => 'business']);
             }
 
+            // And that a businesses row exists. Without one, MySQL rejects
+            // every claim against this account's coupons — claimed_coupons
+            // .business_id has a foreign key to businesses.
+            BusinessResolver::ensureFor($user);
+
             return response()->json([
                 'status' => 'success',
                 'message' => 'Subscription created successfully',
@@ -291,15 +290,21 @@ class BusinessSubscriptionController extends Controller
     {
         $user = Auth::user();
 
-        // Find active free plan
-        $freePlan = Subscription::whereRaw('LOWER(name) = ?', ['free'])
+        // Find active free plan - check by name or by price = 0 and billing_cycle = 'free'
+        $freePlan = Subscription::where(function ($query) {
+            $query->whereRaw('LOWER(name) = ?', ['free'])
+                ->orWhere(function ($q) {
+                    $q->where('price', 0)
+                        ->where('billing_cycle', 'free');
+                });
+        })
             ->where('status', true)
             ->first();
 
         if (!$freePlan) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'Free plan is not available',
+                'message' => 'Free plan is not available. Please contact support.',
             ], 404);
         }
 
@@ -308,28 +313,49 @@ class BusinessSubscriptionController extends Controller
             ->where('status', 'active')
             ->first();
 
+        // If user has an active subscription
         if ($existingActive) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'You already have an active subscription',
-            ], 400);
-        }
+            // If they're already on the free plan, just return success (no need to create duplicate)
+            if ($existingActive->subscription_id === $freePlan->id) {
+                // Update the expiry date if needed (in case the free plan expiry date changed)
+                $absoluteExpiry = data_get($freePlan->metadata, 'expires_at');
+                if ($absoluteExpiry) {
+                    $targetEndsAt = Carbon::parse($absoluteExpiry)->endOfDay();
+                    if (!$existingActive->ends_at || $existingActive->ends_at->ne($targetEndsAt)) {
+                        $existingActive->update(['ends_at' => $targetEndsAt]);
+                    }
+                }
 
-        // Check if user has ever claimed free plan before (one-time)
-        $claimedFreeBefore = UserSubscription::where('user_id', $user->id)
-            ->where('subscription_id', $freePlan->id)
-            ->exists();
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'You are already on the free plan',
+                    'data' => $existingActive->fresh()->load('subscription'),
+                ]);
+            }
 
-        if ($claimedFreeBefore) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Free plan can only be claimed once',
-            ], 400);
+            // Cancel existing subscription to allow switching to free plan
+            $existingActive->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+            ]);
+        } else {
+            // Only check if they've claimed free before if they don't have an active subscription
+            // (i.e., this is a first-time claim, not a plan change)
+            $claimedFreeBefore = UserSubscription::where('user_id', $user->id)
+                ->where('subscription_id', $freePlan->id)
+                ->exists();
+
+            if ($claimedFreeBefore) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Free plan can only be claimed once. You can switch to it from a paid plan.',
+                ], 400);
+            }
         }
 
         $startsAt = now();
         // Always end Free subscriptions on Dec 1, 2025
-        $endsAt = Carbon::parse('2025-12-01')->endOfDay();
+        $endsAt = Carbon::parse('2025-12-27')->endOfDay();
 
         $userSubscription = UserSubscription::create([
             'user_id' => $user->id,
@@ -346,10 +372,13 @@ class BusinessSubscriptionController extends Controller
             ],
         ]);
 
-        // Ensure role set to business
+        // Ensure role set to business, and that a businesses row exists —
+        // see the note in createSubscription().
         if ($user->role !== 'business') {
             $user->update(['role' => 'business']);
         }
+
+        BusinessResolver::ensureFor($user);
 
         return response()->json([
             'status' => 'success',
@@ -567,12 +596,21 @@ class BusinessSubscriptionController extends Controller
             ], 404);
         }
 
+        // The customer paid through the end of the current period, so keep
+        // access until then rather than revoking on the spot. Previously
+        // ends_at was left untouched, which combined with the absent access
+        // gate meant cancellation changed nothing at all.
+        $accessUntil = $activeSubscription->current_period_end
+            ?? $activeSubscription->ends_at
+            ?? now();
+
         try {
-            // Cancel Stripe subscription if exists
-            if (isset($activeSubscription->subscription_data['stripe_subscription_id'])) {
-                $stripeSubscription = StripeSubscription::retrieve(
-                    $activeSubscription->subscription_data['stripe_subscription_id']
-                );
+            $stripeSubscriptionId = $activeSubscription->stripe_subscription_id
+                ?? $activeSubscription->subscription_data['stripe_subscription_id']
+                ?? null;
+
+            if ($stripeSubscriptionId) {
+                $stripeSubscription = StripeSubscription::retrieve($stripeSubscriptionId);
                 $stripeSubscription->cancel();
             }
 
@@ -580,6 +618,8 @@ class BusinessSubscriptionController extends Controller
             $activeSubscription->update([
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
+                'ends_at' => $accessUntil,
+                'cancel_at_period_end' => true,
             ]);
 
             Log::info('Subscription cancelled successfully', [
@@ -603,6 +643,8 @@ class BusinessSubscriptionController extends Controller
             $activeSubscription->update([
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
+                'ends_at' => $accessUntil,
+                'cancel_at_period_end' => true,
             ]);
 
             return response()->json([
@@ -613,26 +655,59 @@ class BusinessSubscriptionController extends Controller
     }
 
     /**
+     * Read a Stripe subscription's period end across API versions.
+     *
+     * current_period_end sits on the subscription up to API 2025-03-31 and on
+     * the subscription item from 2025-04-30. stripe-php 18 targets the newer
+     * shape, so reading only the old location yields null.
+     */
+    private function resolveStripePeriodEnd($stripeSubscription): ?Carbon
+    {
+        $timestamp = $stripeSubscription->current_period_end
+            ?? $stripeSubscription->items->data[0]->current_period_end
+            ?? null;
+
+        return $timestamp ? Carbon::createFromTimestamp($timestamp) : null;
+    }
+
+    /**
      * Get or create Stripe customer
      */
     private function getOrCreateStripeCustomer($user)
     {
         try {
-            // Try to find existing customer by email
-            $customers = Customer::all(['email' => $user->email, 'limit' => 1]);
+            // Prefer the stored id. The previous email lookup cost a round trip
+            // on every payment flow, broke when a user changed their email, and
+            // could match a customer from another environment sharing the same
+            // Stripe account.
+            if ($user->stripe_customer_id) {
+                try {
+                    $existing = Customer::retrieve($user->stripe_customer_id);
 
-            if ($customers->data && count($customers->data) > 0) {
-                return $customers->data[0];
+                    if (empty($existing->deleted)) {
+                        return $existing;
+                    }
+                } catch (ApiErrorException $e) {
+                    // Stored id is stale (wrong environment, deleted customer).
+                    // Fall through and create a fresh one.
+                    Log::warning('Stored stripe_customer_id could not be retrieved', [
+                        'user_id' => $user->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
             }
 
-            // Create new customer
-            return Customer::create([
+            $customer = Customer::create([
                 'email' => $user->email,
                 'name' => $user->name,
                 'metadata' => [
                     'user_id' => $user->id,
                 ],
             ]);
+
+            $user->forceFill(['stripe_customer_id' => $customer->id])->save();
+
+            return $customer;
 
         } catch (ApiErrorException $e) {
             Log::error('Stripe customer creation failed', [
@@ -661,95 +736,14 @@ class BusinessSubscriptionController extends Controller
             return response()->json(['error' => 'Invalid signature'], 400);
         }
 
-        switch ($event->type) {
-            case 'payment_intent.succeeded':
-                $this->handlePaymentSucceeded($event->data->object);
-                break;
-
-            case 'invoice.payment_succeeded':
-                $this->handleInvoicePaymentSucceeded($event->data->object);
-                break;
-
-            case 'invoice.payment_failed':
-                $this->handleInvoicePaymentFailed($event->data->object);
-                break;
-
-            case 'customer.subscription.deleted':
-                $this->handleSubscriptionDeleted($event->data->object);
-                break;
-        }
+        // All event handling lives in StripeWebhookService, including the
+        // idempotency guard. Always answer 200 once the signature is valid:
+        // a non-2xx makes Stripe redeliver, and the idempotency guard would
+        // then discard the redelivery as a replay, so the event would be lost
+        // rather than retried. Handler failures are recorded on the event row.
+        app(StripeWebhookService::class)->handle($event);
 
         return response()->json(['status' => 'success']);
-    }
-
-    /**
-     * Handle successful payment
-     */
-    private function handlePaymentSucceeded($paymentIntent)
-    {
-        Log::info('Payment succeeded', [
-            'payment_intent_id' => $paymentIntent->id,
-            'customer_id' => $paymentIntent->customer,
-        ]);
-    }
-
-    /**
-     * Handle successful invoice payment
-     */
-    private function handleInvoicePaymentSucceeded($invoice)
-    {
-        Log::info('Invoice payment succeeded', [
-            'invoice_id' => $invoice->id,
-            'customer_id' => $invoice->customer,
-        ]);
-
-        try {
-            $stripeSubscriptionId = $invoice->subscription ?? null;
-            $userSubscription = $stripeSubscriptionId
-                ? UserSubscription::where('transaction_id', $stripeSubscriptionId)->first()
-                : null;
-
-            if ($userSubscription) {
-                Payment::create([
-                    'user_id' => $userSubscription->user_id,
-                    'user_subscription_id' => $userSubscription->id,
-                    'provider' => 'stripe',
-                    'provider_payment_id' => $invoice->payment_intent ?? $invoice->id,
-                    'amount' => $userSubscription->subscription->price ?? 0,
-                    'currency' => $invoice->currency ?? 'usd',
-                    'status' => 'succeeded',
-                    'raw_response' => $invoice,
-                    'paid_at' => Carbon::createFromTimestamp($invoice->status_transitions->paid_at ?? time()),
-                ]);
-            }
-        } catch (\Exception $e) {
-            Log::error('Failed to record payment from invoice webhook', [
-                'error' => $e->getMessage(),
-                'invoice_id' => $invoice->id ?? null,
-            ]);
-        }
-    }
-
-    /**
-     * Handle failed invoice payment
-     */
-    private function handleInvoicePaymentFailed($invoice)
-    {
-        Log::warning('Invoice payment failed', [
-            'invoice_id' => $invoice->id,
-            'customer_id' => $invoice->customer,
-        ]);
-    }
-
-    /**
-     * Handle subscription deletion
-     */
-    private function handleSubscriptionDeleted($subscription)
-    {
-        Log::info('Subscription deleted', [
-            'subscription_id' => $subscription->id,
-            'customer_id' => $subscription->customer,
-        ]);
     }
 
     /**
