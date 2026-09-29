@@ -427,10 +427,23 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function scopeNearbyBusinesses($query, $latitude, $longitude, $radius, $limit)
     {
+        // Haversine, in miles. Repeated in the WHERE rather than filtered with
+        // HAVING: HAVING on a query with no GROUP BY is a MySQL extension, and
+        // SQLite rejects it outright ("HAVING clause on a non-aggregate
+        // query") — which made this endpoint, and anything testing it,
+        // impossible to run locally.
+        $haversine = '(3959 * acos(cos(radians(?)) * cos(radians(latitude))'
+            . ' * cos(radians(longitude) - radians(?))'
+            . ' + sin(radians(?)) * sin(radians(latitude))))';
+
         return $query->select('*')
-            ->selectRaw("(3959 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) AS distance", [$latitude, $longitude, $latitude])
-            ->having('distance', '<=', $radius)
-            ->where('role', 'Business')
+            ->selectRaw("{$haversine} AS distance", [$latitude, $longitude, $latitude])
+            ->whereRaw("{$haversine} <= ?", [$latitude, $longitude, $latitude, $radius])
+            // Lowercase: that is the value every write path and RoleMiddleware
+            // use. 'Business' only ever matched because MySQL's default
+            // collation is case-insensitive; it matches nothing on SQLite or
+            // under a binary collation.
+            ->where('role', 'business')
             ->whereNotNull('latitude')
             ->whereNotNull('longitude')
             ->orderBy('distance')
