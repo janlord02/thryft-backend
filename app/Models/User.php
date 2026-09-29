@@ -378,6 +378,24 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * Businesses this shopper has saved.
+     */
+    public function favoriteBusinesses()
+    {
+        return $this->belongsToMany(User::class, 'business_favorites', 'user_id', 'business_id')
+            ->withTimestamps();
+    }
+
+    /**
+     * Shoppers who have saved this business.
+     */
+    public function favoritedByShoppers()
+    {
+        return $this->belongsToMany(User::class, 'business_favorites', 'business_id', 'user_id')
+            ->withTimestamps();
+    }
+
+    /**
      * Get the business tags for the user (business).
      */
     public function businessTags()

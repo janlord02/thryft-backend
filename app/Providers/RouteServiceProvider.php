@@ -25,8 +25,12 @@ class RouteServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // The SPA makes roughly eight calls per page view (settings, theme, user,
+        // notification stats, page data), so 60/min logged a shopper out after
+        // six quick page views. The sensitive endpoints below have their own,
+        // much tighter limits; this one only needs to stop runaway clients.
         RateLimiter::for('api', function (Request $request) {
-            return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
+            return Limit::perMinute(300)->by($request->user()?->id ?: $request->ip());
         });
 
         // Auth endpoints are unauthenticated, so key on submitted email + source IP.
