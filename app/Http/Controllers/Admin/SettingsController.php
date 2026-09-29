@@ -17,7 +17,7 @@ class SettingsController extends Controller
      */
     public function index(): JsonResponse
     {
-        $groups = ['general', 'security', 'email', 'notifications', 'advanced', 'theme'];
+        $groups = ['general', 'security', 'email', 'notifications', 'advanced', 'theme', 'homepage'];
         $settings = [];
 
         foreach ($groups as $group) {
@@ -53,7 +53,7 @@ class SettingsController extends Controller
             'settings.*.key' => 'required|string',
             'settings.*.value' => 'nullable',
             'settings.*.type' => 'sometimes|string|in:string,boolean,integer,json',
-            'settings.*.group' => 'sometimes|string|in:general,security,email,notifications,advanced,theme',
+            'settings.*.group' => 'sometimes|string|in:general,security,email,notifications,advanced,theme,homepage',
         ]);
 
         if ($validator->fails()) {
@@ -541,6 +541,55 @@ class SettingsController extends Controller
                 'group' => 'advanced',
                 'description' => 'Log retention period in days',
                 'is_public' => false,
+            ],
+            // Home page hero (Admin > Settings > Home page)
+            [
+                'key' => 'hero_eyebrow',
+                'value' => 'SHOP LOCAL THIS HOLIDAY SEASON',
+                'type' => 'string',
+                'group' => 'homepage',
+                'description' => 'Small line above the home page headline',
+                'is_public' => true,
+            ],
+            [
+                'key' => 'hero_title',
+                'value' => 'Discover local businesses this holiday season',
+                'type' => 'string',
+                'group' => 'homepage',
+                'description' => 'Home page headline',
+                'is_public' => true,
+            ],
+            [
+                'key' => 'hero_subtitle',
+                'value' => 'Unique gifts, cozy cafés and trusted services — the people and places that make your community brighter.',
+                'type' => 'string',
+                'group' => 'homepage',
+                'description' => 'Home page subtitle',
+                'is_public' => true,
+            ],
+            [
+                'key' => 'hero_button_label',
+                'value' => 'Explore nearby',
+                'type' => 'string',
+                'group' => 'homepage',
+                'description' => 'Home page hero button label',
+                'is_public' => true,
+            ],
+            [
+                'key' => 'hero_button_link',
+                'value' => '',
+                'type' => 'string',
+                'group' => 'homepage',
+                'description' => 'Where the hero button goes. Empty scrolls to nearby stores; a path or full URL navigates there.',
+                'is_public' => true,
+            ],
+            [
+                'key' => 'hero_background',
+                'value' => '',
+                'type' => 'string',
+                'group' => 'homepage',
+                'description' => 'Hero background colour (hex). Empty uses the primary colour.',
+                'is_public' => true,
             ],
         ];
 
