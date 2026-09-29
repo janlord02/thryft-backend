@@ -1479,7 +1479,7 @@ class UserDashboardController extends Controller
                 title: $title,
                 message: $message,
                 type: 'success',
-                userIds: [$business->id], // Send to business owner
+                userIds: [$business->owner_user_id], // Send to business owner
                 data: [
                     'coupon_id' => $claimedCoupon->id,
                     'coupon_code' => $claimedCoupon->coupon_code,

@@ -48,9 +48,14 @@ class ClaimedCoupon extends Model
         return $this->belongsTo(Coupon::class);
     }
 
+    /**
+     * business_id is a businesses.id (the claim is filed against the business,
+     * not its creator). It equals the owner's users.id only for businesses
+     * that predate the extraction, so this must not resolve through users.
+     */
     public function business(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'business_id');
+        return $this->belongsTo(Business::class, 'business_id');
     }
 
     public function product(): BelongsTo
