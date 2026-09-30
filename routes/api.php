@@ -24,6 +24,9 @@ use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\NotificationController as UserNotificationController;
 use App\Http\Controllers\BusinessSubscriptionController;
 use App\Http\Controllers\BusinessStaffController;
+use App\Http\Controllers\EventController;
+use App\Http\Controllers\EventBrowseController;
+use App\Http\Controllers\EventRegistrationController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\BusinessDashboardController;
 use App\Http\Controllers\Public\GuestBrowseController;
@@ -93,6 +96,8 @@ Route::middleware('maintenance')->group(function () {
     Route::middleware('auth.optional')->group(function () {
         Route::get('/nearby-businesses', [UserDashboardController::class, 'nearbyBusinesses']);
         Route::get('/business/{businessId}/products', [UserDashboardController::class, 'businessProducts']);
+        Route::get('/events', [EventBrowseController::class, 'index']);
+        Route::get('/events/{slug}', [EventBrowseController::class, 'show']);
     });
 
     // Protected routes
@@ -148,6 +153,12 @@ Route::middleware('maintenance')->group(function () {
         // Customer-side: claiming and viewing your own coupons.
         Route::post('/coupons/claim', [UserDashboardController::class, 'claimCoupon'])->middleware('throttle:claim');
         Route::get('/coupons/claimed', [UserDashboardController::class, 'getClaimedCoupons']);
+
+        // Customer-side: a seat at an event.
+        Route::post('/events/{event}/register', [EventRegistrationController::class, 'register'])
+            ->whereNumber('event')->middleware('throttle:claim');
+        Route::delete('/events/{event}/register', [EventRegistrationController::class, 'unregister'])->whereNumber('event');
+        Route::get('/my/events', [EventRegistrationController::class, 'mine']);
 
         // Business-side: the till. These sat in the plain auth:sanctum block,
         // outside both the subscription gate and the ability gate — so a
@@ -322,6 +333,17 @@ Route::middleware('maintenance')->group(function () {
                 Route::post('/', [BusinessStaffController::class, 'store']);
                 Route::patch('/{member}', [BusinessStaffController::class, 'update'])->whereNumber('member');
                 Route::delete('/{member}', [BusinessStaffController::class, 'destroy'])->whereNumber('member');
+            });
+
+            // Events the business hosts.
+            Route::prefix('business/events')->middleware('business:business.manage_events')->group(function () {
+                Route::get('/', [EventController::class, 'index']);
+                Route::post('/', [EventController::class, 'store']);
+                Route::get('/{event}', [EventController::class, 'show'])->whereNumber('event');
+                Route::put('/{event}', [EventController::class, 'update'])->whereNumber('event');
+                Route::post('/{event}', [EventController::class, 'update'])->whereNumber('event'); // FormData with _method=PUT
+                Route::delete('/{event}', [EventController::class, 'destroy'])->whereNumber('event');
+                Route::get('/{event}/registrations', [EventController::class, 'registrations'])->whereNumber('event');
             });
 
             // Product management routes

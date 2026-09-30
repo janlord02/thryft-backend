@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Public;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\Coupon;
+use App\Models\Event;
 use Illuminate\Http\Response;
 
 /**
@@ -53,6 +54,25 @@ class SitemapController extends Controller
                             'couponSlug' => $coupon->slug,
                         ]),
                         'lastmod' => optional($coupon->updated_at)->toAtomString(),
+                        'changefreq' => 'daily',
+                    ];
+                }
+            });
+
+        Event::query()
+            ->published()
+            ->upcoming()
+            ->with('business:id,slug,status')
+            ->orderBy('id')
+            ->chunk(500, function ($events) use (&$urls) {
+                foreach ($events as $event) {
+                    if (!$event->business || $event->business->status !== 'active') {
+                        continue;
+                    }
+
+                    $urls[] = [
+                        'loc' => route('public.event', ['slug' => $event->slug]),
+                        'lastmod' => optional($event->updated_at)->toAtomString(),
                         'changefreq' => 'daily',
                     ];
                 }

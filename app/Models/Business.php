@@ -77,6 +77,11 @@ class Business extends Model
         return $this->hasMany(ClaimedCoupon::class, 'business_id');
     }
 
+    public function events(): HasMany
+    {
+        return $this->hasMany(Event::class);
+    }
+
     public function scopeActive($query)
     {
         return $query->where('status', 'active');
