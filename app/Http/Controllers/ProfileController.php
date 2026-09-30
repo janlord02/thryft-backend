@@ -287,10 +287,10 @@ class ProfileController extends Controller
         $google2fa = new Google2FA();
         $secret = $google2fa->generateSecretKey();
 
-        $user->update([
-            'two_factor_secret' => $secret,
-            'two_factor_enabled' => true
-        ]);
+        // Only the secret for now. two_factor_enabled is what gates login, and
+        // it must not flip until the code is confirmed: a user who opened this
+        // and closed the app used to be locked behind 2FA at their next login.
+        $user->update(['two_factor_secret' => $secret]);
 
         $qrCodeUrl = $google2fa->getQRCodeUrl(
             config('app.name'),
@@ -348,7 +348,10 @@ class ProfileController extends Controller
             ], 400);
         }
 
-        $user->update(['two_factor_confirmed_at' => now()]);
+        $user->update([
+            'two_factor_enabled' => true,
+            'two_factor_confirmed_at' => now(),
+        ]);
 
         // Log 2FA enable
         ActivityService::logTwoFactorEnable($user);
@@ -415,7 +418,7 @@ class ProfileController extends Controller
             'status' => 'success',
             'data' => [
                 'two_factor_enabled' => $user->hasTwoFactorEnabled(),
-                'two_factor_setup' => $user->two_factor_enabled && !$user->two_factor_confirmed_at
+                'two_factor_setup' => (bool) $user->two_factor_secret && !$user->two_factor_confirmed_at
             ]
         ]);
     }
@@ -460,8 +463,8 @@ class ProfileController extends Controller
     {
         $user = $request->user();
 
-        // Only allow canceling if 2FA is enabled but not confirmed
-        if (!$user->two_factor_enabled || $user->two_factor_confirmed_at) {
+        // Only allow canceling a setup that was started but not confirmed
+        if (!$user->two_factor_secret || $user->two_factor_confirmed_at) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Cannot cancel 2FA setup'
