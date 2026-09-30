@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Coupon;
 use App\Models\Product;
 use App\Services\PlanLimits;
+use App\Services\ShopperAlerts;
 use App\Support\BusinessResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -88,7 +89,7 @@ class CouponController extends Controller
             ], 402);
         }
 
-        return DB::transaction(function () use ($request) {
+        $coupon = DB::transaction(function () use ($request) {
             // Handle banner image upload
             $bannerImagePath = null;
             if ($request->hasFile('banner_image')) {
@@ -136,12 +137,18 @@ class CouponController extends Controller
             $coupon->qr_code = $coupon->generateQRCode();
             $coupon->save();
 
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Coupon created successfully',
-                'data' => $coupon->load('products'),
-            ], 201);
+            return $coupon;
         });
+
+        // After the commit: shoppers who saved this business hear about the
+        // offer. A notification failure must not undo the coupon.
+        app(ShopperAlerts::class)->announceNewOffer($coupon);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Coupon created successfully',
+            'data' => $coupon->load('products'),
+        ], 201);
     }
 
     /**
@@ -225,7 +232,7 @@ class CouponController extends Controller
             ], 422);
         }
 
-        return DB::transaction(function () use ($data, $request, $coupon) {
+        DB::transaction(function () use ($data, $request, $coupon) {
             // Handle banner image upload
             $bannerImagePath = $coupon->banner_image; // Keep existing image by default
             if ($request->hasFile('banner_image')) {
@@ -239,7 +246,7 @@ class CouponController extends Controller
 
             $coupon->update([
                 'title' => $data['title'],
-                'code' => $data['code'] ?: $coupon->code,
+                'code' => ($data['code'] ?? null) ?: $coupon->code,
                 'description' => $data['description'] ?? null,
                 'redeem_instructions' => $data['redeem_instructions'] ?? null,
                 'banner_image' => $bannerImagePath,
@@ -260,13 +267,17 @@ class CouponController extends Controller
             if (isset($data['product_ids'])) {
                 $coupon->products()->sync($data['product_ids'] ?? []);
             }
-
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Coupon updated successfully',
-                'data' => $coupon->load('products'),
-            ]);
         });
+
+        // A coupon saved as a draft and switched on later is announced now;
+        // one that was already announced is left alone (the marker says so).
+        app(ShopperAlerts::class)->announceNewOffer($coupon);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Coupon updated successfully',
+            'data' => $coupon->load('products'),
+        ]);
     }
 
     /**
