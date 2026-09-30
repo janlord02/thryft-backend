@@ -38,11 +38,19 @@ class BusinessSubscriptionController extends Controller
         // past_due inside grace, which the old inline clause did not.
         $activeSubscription = $user->activeSubscription();
 
+        // Staff hold no plan of their own; the business they act for does.
+        // Without this the app would march every staff member to checkout.
+        $business = $activeSubscription ? null : BusinessResolver::forUser($user);
+        $coveredByBusiness = $business !== null
+            && (int) $business->owner_user_id !== (int) $user->id
+            && $business->hasActiveSubscription();
+
         return response()->json([
             'status' => 'success',
             'data' => [
-                'hasActiveSubscription' => $activeSubscription !== null,
+                'hasActiveSubscription' => $activeSubscription !== null || $coveredByBusiness,
                 'subscription' => $activeSubscription,
+                'covered_by_business' => $coveredByBusiness,
             ],
         ]);
     }

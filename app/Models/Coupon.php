@@ -40,6 +40,8 @@ class Coupon extends Model
         'expires_at',
         'is_active',
         'is_featured',
+        'is_flash',
+        'followers_notified_at',
         'terms_conditions',
     ];
 
@@ -57,6 +59,8 @@ class Coupon extends Model
         'expires_at' => 'datetime',
         'is_active' => 'boolean',
         'is_featured' => 'boolean',
+        'is_flash' => 'boolean',
+        'followers_notified_at' => 'datetime',
         'terms_conditions' => 'array',
     ];
 

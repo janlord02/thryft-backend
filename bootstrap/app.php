@@ -25,6 +25,7 @@ return Application::configure(basePath: dirname(__DIR__))
             // Supersedes ['role:business', 'subscribed'] — resolves the business,
             // checks the subscription, then checks the ability.
             'business' => \App\Http\Middleware\EnsureBusinessAbility::class,
+            'auth.optional' => \App\Http\Middleware\OptionalSanctumAuth::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

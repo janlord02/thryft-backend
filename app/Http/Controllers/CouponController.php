@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Coupon;
 use App\Models\Product;
 use App\Services\PlanLimits;
+use App\Services\ShopperAlerts;
 use App\Support\BusinessResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -68,15 +69,26 @@ class CouponController extends Controller
             'discount_type' => 'required|in:fixed,percentage',
             'minimum_amount' => 'nullable|numeric|min:0',
             'usage_limit' => 'nullable|integer|min:1',
+            'claim_limit' => 'nullable|integer|min:1',
             'per_user_limit' => 'nullable|integer|min:1',
             'starts_at' => 'nullable|date',
             'expires_at' => 'nullable|date|after:starts_at',
             'is_active' => 'nullable|boolean',
             'is_featured' => 'nullable|boolean',
+            'is_flash' => 'nullable|boolean',
             'product_ids' => 'nullable|array',
             'product_ids.*' => 'integer|exists:products,id',
             'terms_conditions' => 'nullable|array',
         ]);
+
+        // A flash deal is defined by its end: without one it is just a coupon.
+        if ($request->boolean('is_flash') && !$request->expires_at) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'A flash deal needs an end time.',
+                'errors' => ['expires_at' => ['A flash deal needs an end time.']],
+            ], 422);
+        }
 
         // Plan quotas come from Subscription.metadata.max_coupons, which the
         // seeder has always written but nothing read until now.
@@ -88,7 +100,7 @@ class CouponController extends Controller
             ], 402);
         }
 
-        return DB::transaction(function () use ($request) {
+        $coupon = DB::transaction(function () use ($request) {
             // Handle banner image upload
             $bannerImagePath = null;
             if ($request->hasFile('banner_image')) {
@@ -119,11 +131,13 @@ class CouponController extends Controller
                 'discount_type' => $request->discount_type,
                 'minimum_amount' => $request->minimum_amount,
                 'usage_limit' => $request->usage_limit,
+                'claim_limit' => $request->claim_limit,
                 'per_user_limit' => $request->per_user_limit ?? 1,
                 'starts_at' => $request->starts_at,
                 'expires_at' => $request->expires_at,
                 'is_active' => $isActive,
                 'is_featured' => $isFeatured,
+                'is_flash' => $request->boolean('is_flash'),
                 'terms_conditions' => $request->terms_conditions,
             ]);
 
@@ -136,12 +150,18 @@ class CouponController extends Controller
             $coupon->qr_code = $coupon->generateQRCode();
             $coupon->save();
 
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Coupon created successfully',
-                'data' => $coupon->load('products'),
-            ], 201);
+            return $coupon;
         });
+
+        // After the commit: shoppers who saved this business hear about the
+        // offer. A notification failure must not undo the coupon.
+        app(ShopperAlerts::class)->announceNewOffer($coupon);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Coupon created successfully',
+            'data' => $coupon->load('products'),
+        ], 201);
     }
 
     /**
@@ -194,6 +214,9 @@ class CouponController extends Controller
         if (isset($data['is_featured'])) {
             $data['is_featured'] = filter_var($data['is_featured'], FILTER_VALIDATE_BOOLEAN);
         }
+        if (isset($data['is_flash'])) {
+            $data['is_flash'] = filter_var($data['is_flash'], FILTER_VALIDATE_BOOLEAN);
+        }
 
         // Manual validation for FormData
         $validator = \Validator::make($data, [
@@ -207,15 +230,25 @@ class CouponController extends Controller
             'discount_type' => 'required|in:fixed,percentage',
             'minimum_amount' => 'nullable|numeric|min:0',
             'usage_limit' => 'nullable|integer|min:1',
+            'claim_limit' => 'nullable|integer|min:1',
             'per_user_limit' => 'nullable|integer|min:1',
             'starts_at' => 'nullable|date',
             'expires_at' => 'nullable|date|after:starts_at',
             'is_active' => 'nullable|boolean',
             'is_featured' => 'nullable|boolean',
+            'is_flash' => 'nullable|boolean',
             'product_ids' => 'nullable|array',
             'product_ids.*' => 'integer|exists:products,id',
             'terms_conditions' => 'nullable|array',
         ]);
+
+        if (!$validator->fails() && !empty($data['is_flash']) && empty($data['expires_at'])) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'A flash deal needs an end time.',
+                'errors' => ['expires_at' => ['A flash deal needs an end time.']],
+            ], 422);
+        }
 
         if ($validator->fails()) {
             return response()->json([
@@ -225,7 +258,7 @@ class CouponController extends Controller
             ], 422);
         }
 
-        return DB::transaction(function () use ($data, $request, $coupon) {
+        DB::transaction(function () use ($data, $request, $coupon) {
             // Handle banner image upload
             $bannerImagePath = $coupon->banner_image; // Keep existing image by default
             if ($request->hasFile('banner_image')) {
@@ -239,7 +272,7 @@ class CouponController extends Controller
 
             $coupon->update([
                 'title' => $data['title'],
-                'code' => $data['code'] ?: $coupon->code,
+                'code' => ($data['code'] ?? null) ?: $coupon->code,
                 'description' => $data['description'] ?? null,
                 'redeem_instructions' => $data['redeem_instructions'] ?? null,
                 'banner_image' => $bannerImagePath,
@@ -248,11 +281,13 @@ class CouponController extends Controller
                 'discount_type' => $data['discount_type'],
                 'minimum_amount' => $data['minimum_amount'] ?? null,
                 'usage_limit' => $data['usage_limit'] ?? null,
+                'claim_limit' => $data['claim_limit'] ?? null,
                 'per_user_limit' => $data['per_user_limit'] ?? 1,
                 'starts_at' => $data['starts_at'] ?? null,
                 'expires_at' => $data['expires_at'] ?? null,
                 'is_active' => $data['is_active'] ?? true,
                 'is_featured' => $data['is_featured'] ?? false,
+                'is_flash' => $data['is_flash'] ?? false,
                 'terms_conditions' => $data['terms_conditions'] ?? null,
             ]);
 
@@ -260,13 +295,17 @@ class CouponController extends Controller
             if (isset($data['product_ids'])) {
                 $coupon->products()->sync($data['product_ids'] ?? []);
             }
-
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Coupon updated successfully',
-                'data' => $coupon->load('products'),
-            ]);
         });
+
+        // A coupon saved as a draft and switched on later is announced now;
+        // one that was already announced is left alone (the marker says so).
+        app(ShopperAlerts::class)->announceNewOffer($coupon);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Coupon updated successfully',
+            'data' => $coupon->load('products'),
+        ]);
     }
 
     /**
