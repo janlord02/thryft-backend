@@ -23,6 +23,7 @@ use App\Http\Controllers\Admin\PromoCodeController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\NotificationController as UserNotificationController;
 use App\Http\Controllers\BusinessSubscriptionController;
+use App\Http\Controllers\BusinessStaffController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\BusinessDashboardController;
 use App\Http\Controllers\Public\GuestBrowseController;
@@ -102,6 +103,10 @@ Route::middleware('maintenance')->group(function () {
                 // Table might not exist yet (migrations not run)
                 // Continue without business tags
             }
+            // Which businesses this account may act for, and what it may do
+            // there. The app decides from this whether to show the merchant
+            // tools, so a staff member with role 'user' can still work a till.
+            $user->setAttribute('business_access', $user->businessAccess());
             return $user;
         });
         Route::post('/logout', [AuthController::class, 'logout']);
@@ -304,6 +309,14 @@ Route::middleware('maintenance')->group(function () {
             Route::prefix('business/dashboard')->middleware('business:business.view_analytics')->group(function () {
                 Route::get('/analytics', [BusinessDashboardController::class, 'analytics']);
                 Route::get('/onboarding', [BusinessDashboardController::class, 'onboarding']);
+            });
+
+            // The team: owner and admins only.
+            Route::prefix('business/staff')->middleware('business:business.manage_staff')->group(function () {
+                Route::get('/', [BusinessStaffController::class, 'index']);
+                Route::post('/', [BusinessStaffController::class, 'store']);
+                Route::patch('/{member}', [BusinessStaffController::class, 'update'])->whereNumber('member');
+                Route::delete('/{member}', [BusinessStaffController::class, 'destroy'])->whereNumber('member');
             });
 
             // Product management routes
