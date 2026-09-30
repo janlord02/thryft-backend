@@ -82,6 +82,11 @@ class Business extends Model
         return $this->hasMany(Event::class);
     }
 
+    public function announcements(): HasMany
+    {
+        return $this->hasMany(Announcement::class);
+    }
+
     public function scopeActive($query)
     {
         return $query->where('status', 'active');

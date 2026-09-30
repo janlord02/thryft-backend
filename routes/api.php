@@ -27,6 +27,8 @@ use App\Http\Controllers\BusinessStaffController;
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\EventBrowseController;
 use App\Http\Controllers\EventRegistrationController;
+use App\Http\Controllers\FlashDealController;
+use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\BusinessDashboardController;
 use App\Http\Controllers\Public\GuestBrowseController;
@@ -98,6 +100,8 @@ Route::middleware('maintenance')->group(function () {
         Route::get('/business/{businessId}/products', [UserDashboardController::class, 'businessProducts']);
         Route::get('/events', [EventBrowseController::class, 'index']);
         Route::get('/events/{slug}', [EventBrowseController::class, 'show']);
+        Route::get('/flash-deals', [FlashDealController::class, 'index']);
+        Route::get('/business/{businessId}/announcements', [AnnouncementController::class, 'forBusiness'])->whereNumber('businessId');
     });
 
     // Protected routes
@@ -344,6 +348,15 @@ Route::middleware('maintenance')->group(function () {
                 Route::post('/{event}', [EventController::class, 'update'])->whereNumber('event'); // FormData with _method=PUT
                 Route::delete('/{event}', [EventController::class, 'destroy'])->whereNumber('event');
                 Route::get('/{event}/registrations', [EventController::class, 'registrations'])->whereNumber('event');
+            });
+
+            // Announcements: updates that are neither a coupon nor an event.
+            Route::prefix('business/announcements')->middleware('business:business.manage_events')->group(function () {
+                Route::get('/', [AnnouncementController::class, 'index']);
+                Route::post('/', [AnnouncementController::class, 'store']);
+                Route::put('/{announcement}', [AnnouncementController::class, 'update'])->whereNumber('announcement');
+                Route::post('/{announcement}', [AnnouncementController::class, 'update'])->whereNumber('announcement'); // FormData with _method=PUT
+                Route::delete('/{announcement}', [AnnouncementController::class, 'destroy'])->whereNumber('announcement');
             });
 
             // Product management routes

@@ -2,12 +2,14 @@
 
 namespace App\Services;
 
+use App\Models\Announcement;
 use App\Models\ClaimedCoupon;
 use App\Models\Coupon;
 use App\Models\Event;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -58,11 +60,13 @@ class ShopperAlerts
         }
 
         $businessName = $this->businessNameFor($coupon);
+        $flash = (bool) $coupon->is_flash;
+        $ends = $flash && $coupon->expires_at ? ' Ends ' . $coupon->expires_at->format('D g:i A') . '.' : '';
 
         try {
             $this->notifications->send(
-                title: "New offer at {$businessName}",
-                message: "{$coupon->title} — {$this->discountText($coupon)} off. Claim it while it lasts.",
+                title: $flash ? "Flash deal at {$businessName}" : "New offer at {$businessName}",
+                message: "{$coupon->title} — {$this->discountText($coupon)} off." . ($flash ? $ends . ' Grab it before it is gone.' : ' Claim it while it lasts.'),
                 type: 'info',
                 userIds: $shopperIds,
                 data: [
@@ -134,6 +138,62 @@ class ShopperAlerts
             );
         } catch (Throwable $e) {
             Log::error('New event alert failed', ['event_id' => $event->id, 'error' => $e->getMessage()]);
+
+            return 0;
+        }
+
+        return count($shopperIds);
+    }
+
+    /**
+     * Tell the shoppers who saved this business about an announcement. Same
+     * once-only marker as offers and events.
+     */
+    public function announceNews(Announcement $announcement): int
+    {
+        if ($announcement->followers_notified_at !== null || $announcement->status !== 'published') {
+            return 0;
+        }
+
+        $claimed = Announcement::query()
+            ->whereKey($announcement->id)
+            ->whereNull('followers_notified_at')
+            ->update(['followers_notified_at' => now()]);
+
+        if ($claimed !== 1) {
+            return 0;
+        }
+        $announcement->followers_notified_at = now();
+
+        $business = $announcement->business;
+        if (!$business) {
+            return 0;
+        }
+
+        $shopperIds = $this->followerIds((int) $business->owner_user_id);
+        if ($shopperIds === []) {
+            return 0;
+        }
+
+        $businessName = $business->name ?: 'a business you saved';
+
+        try {
+            $this->notifications->send(
+                title: "News from {$businessName}",
+                message: $announcement->title . ($announcement->body ? ' — ' . Str::limit(trim($announcement->body), 120) : ''),
+                type: 'info',
+                userIds: $shopperIds,
+                data: [
+                    'kind' => 'announcement',
+                    'business_id' => $business->owner_user_id,
+                    'business_name' => $businessName,
+                    'announcement_id' => $announcement->id,
+                    'action_url' => "/user/business/{$business->owner_user_id}?tab=updates",
+                ],
+                channel: 'shopper',
+            );
+        } catch (Throwable $e) {
+            Log::error('Announcement alert failed', ['announcement_id' => $announcement->id, 'error' => $e->getMessage()]);
 
             return 0;
         }
