@@ -33,3 +33,11 @@ Schedule::command('subscriptions:reconcile')
     ->dailyAt('03:15')
     ->withoutOverlapping()
     ->onOneServer();
+
+// Shoppers with a claimed coupon expiring in the next few days get one
+// reminder. 14:00 UTC is morning across the US, so the push arrives at a
+// civil hour rather than overnight.
+Schedule::command('coupons:remind-expiring')
+    ->dailyAt('14:00')
+    ->withoutOverlapping()
+    ->onOneServer();
