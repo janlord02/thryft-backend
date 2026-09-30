@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ClaimedCoupon;
 use App\Models\Coupon;
+use App\Models\Event;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -76,6 +77,63 @@ class ShopperAlerts
             );
         } catch (Throwable $e) {
             Log::error('New offer alert failed', ['coupon_id' => $coupon->id, 'error' => $e->getMessage()]);
+
+            return 0;
+        }
+
+        return count($shopperIds);
+    }
+
+    /**
+     * Tell the shoppers who saved this business about a newly published
+     * event. Same once-only marker as offers.
+     */
+    public function announceNewEvent(Event $event): int
+    {
+        if ($event->followers_notified_at !== null || $event->status !== 'published' || $event->isOver()) {
+            return 0;
+        }
+
+        $claimed = Event::query()
+            ->whereKey($event->id)
+            ->whereNull('followers_notified_at')
+            ->update(['followers_notified_at' => now()]);
+
+        if ($claimed !== 1) {
+            return 0;
+        }
+        $event->followers_notified_at = now();
+
+        $business = $event->business;
+        if (!$business) {
+            return 0;
+        }
+
+        $shopperIds = $this->followerIds((int) $business->owner_user_id);
+        if ($shopperIds === []) {
+            return 0;
+        }
+
+        $businessName = $business->name ?: 'a business you saved';
+
+        try {
+            $this->notifications->send(
+                title: "New event at {$businessName}",
+                message: "{$event->title} — {$event->starts_at->format('D, M j \a\t g:i A')}. Save your spot.",
+                type: 'info',
+                userIds: $shopperIds,
+                data: [
+                    'kind' => 'new_event',
+                    'business_id' => $business->owner_user_id,
+                    'business_name' => $businessName,
+                    'event_id' => $event->id,
+                    'event_slug' => $event->slug,
+                    'action_url' => "/user/events/{$event->slug}",
+                ],
+                channel: 'shopper',
+            );
+        } catch (Throwable $e) {
+            Log::error('New event alert failed', ['event_id' => $event->id, 'error' => $e->getMessage()]);
 
             return 0;
         }

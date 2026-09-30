@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Public\BusinessPageController;
+use App\Http\Controllers\Public\EventPageController;
 use App\Http\Controllers\Public\SitemapController;
 use Illuminate\Support\Facades\Route;
 
@@ -23,3 +24,5 @@ Route::prefix('b')->group(function () {
     Route::get('/{business}', [BusinessPageController::class, 'show'])->name('public.business');
     Route::get('/{business}/deals/{couponSlug}', [BusinessPageController::class, 'deal'])->name('public.deal');
 });
+
+Route::get('/e/{slug}', [EventPageController::class, 'show'])->name('public.event');
