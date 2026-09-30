@@ -87,6 +87,14 @@ Route::middleware('maintenance')->group(function () {
         Route::get('/businesses/{business}/deals/{couponSlug}', [GuestBrowseController::class, 'deal']);
     });
 
+    // Guest mode in the app: the home, search and business screens load for
+    // anyone. With a token the same responses carry the shopper's favorites
+    // and claimed flags; without one they are simply public listings.
+    Route::middleware('auth.optional')->group(function () {
+        Route::get('/nearby-businesses', [UserDashboardController::class, 'nearbyBusinesses']);
+        Route::get('/business/{businessId}/products', [UserDashboardController::class, 'businessProducts']);
+    });
+
     // Protected routes
     Route::middleware('auth:sanctum')->group(function () {
         Route::get('/user', function (Request $request) {
@@ -137,9 +145,6 @@ Route::middleware('maintenance')->group(function () {
         // User activity route
         Route::get('/activity', [UserDashboardController::class, 'userActivity']);
 
-        // Nearby businesses route (for all authenticated users)
-        Route::get('/nearby-businesses', [UserDashboardController::class, 'nearbyBusinesses']);
-        Route::get('/business/{businessId}/products', [UserDashboardController::class, 'businessProducts']);
         // Customer-side: claiming and viewing your own coupons.
         Route::post('/coupons/claim', [UserDashboardController::class, 'claimCoupon'])->middleware('throttle:claim');
         Route::get('/coupons/claimed', [UserDashboardController::class, 'getClaimedCoupons']);
