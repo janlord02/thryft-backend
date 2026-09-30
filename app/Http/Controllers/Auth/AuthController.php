@@ -83,6 +83,10 @@ class AuthController extends Controller
             'password' => Hash::make($request->password),
         ]);
 
+        // Came through a business's referral link? Attribute it now; the
+        // reward waits for a real redemption.
+        app(\App\Services\Referrals::class)->attach($user, $request->input('referral_code'));
+
         // Check if email verification is required
         $emailVerificationRequired = Setting::getValue('email_verification', true);
 
@@ -189,6 +193,9 @@ class AuthController extends Controller
         // claimed_coupons.business_id has a foreign key to businesses — and
         // the account has no public page.
         BusinessResolver::ensureFor($user);
+
+        // A business referred by another business; qualifies on first payment.
+        app(\App\Services\Referrals::class)->attach($user, $request->input('referral_code'));
 
         // Check if email verification is required
         $emailVerificationRequired = Setting::getValue('email_verification', true);
