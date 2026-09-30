@@ -407,3 +407,10 @@ Route::middleware('maintenance')->group(function () {
 // would be recorded as a delivery failure.
 Route::post('/stripe/webhook', [BusinessSubscriptionController::class, 'webhook'])
     ->withoutMiddleware('throttle:api');
+
+// Deploy health check. Outside auth and throttling on purpose: the deploy
+// script curls it right after `artisan up`, and it must answer even when the
+// API limiter is busy. It used to live only as an uncommitted commit on the
+// server, which made every pull a conflict.
+Route::get('/health', fn () => response()->json(['status' => 'ok']))
+    ->withoutMiddleware('throttle:api');
