@@ -25,6 +25,7 @@ class ClaimedCoupon extends Model
         'expires_at',
         'status',
         'used_at',
+        'expiry_reminded_at',
         'redeemed_by_user_id',
         'usage_notes',
     ];
@@ -35,6 +36,7 @@ class ClaimedCoupon extends Model
         'minimum_amount' => 'decimal:2',
         'expires_at' => 'datetime',
         'used_at' => 'datetime',
+        'expiry_reminded_at' => 'datetime',
     ];
 
     // Relationships

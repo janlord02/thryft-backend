@@ -23,6 +23,12 @@ use App\Http\Controllers\Admin\PromoCodeController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\NotificationController as UserNotificationController;
 use App\Http\Controllers\BusinessSubscriptionController;
+use App\Http\Controllers\BusinessStaffController;
+use App\Http\Controllers\EventController;
+use App\Http\Controllers\EventBrowseController;
+use App\Http\Controllers\EventRegistrationController;
+use App\Http\Controllers\FlashDealController;
+use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\BusinessDashboardController;
 use App\Http\Controllers\Public\GuestBrowseController;
@@ -86,6 +92,18 @@ Route::middleware('maintenance')->group(function () {
         Route::get('/businesses/{business}/deals/{couponSlug}', [GuestBrowseController::class, 'deal']);
     });
 
+    // Guest mode in the app: the home, search and business screens load for
+    // anyone. With a token the same responses carry the shopper's favorites
+    // and claimed flags; without one they are simply public listings.
+    Route::middleware('auth.optional')->group(function () {
+        Route::get('/nearby-businesses', [UserDashboardController::class, 'nearbyBusinesses']);
+        Route::get('/business/{businessId}/products', [UserDashboardController::class, 'businessProducts']);
+        Route::get('/events', [EventBrowseController::class, 'index']);
+        Route::get('/events/{slug}', [EventBrowseController::class, 'show']);
+        Route::get('/flash-deals', [FlashDealController::class, 'index']);
+        Route::get('/business/{businessId}/announcements', [AnnouncementController::class, 'forBusiness'])->whereNumber('businessId');
+    });
+
     // Protected routes
     Route::middleware('auth:sanctum')->group(function () {
         Route::get('/user', function (Request $request) {
@@ -102,6 +120,10 @@ Route::middleware('maintenance')->group(function () {
                 // Table might not exist yet (migrations not run)
                 // Continue without business tags
             }
+            // Which businesses this account may act for, and what it may do
+            // there. The app decides from this whether to show the merchant
+            // tools, so a staff member with role 'user' can still work a till.
+            $user->setAttribute('business_access', $user->businessAccess());
             return $user;
         });
         Route::post('/logout', [AuthController::class, 'logout']);
@@ -132,12 +154,15 @@ Route::middleware('maintenance')->group(function () {
         // User activity route
         Route::get('/activity', [UserDashboardController::class, 'userActivity']);
 
-        // Nearby businesses route (for all authenticated users)
-        Route::get('/nearby-businesses', [UserDashboardController::class, 'nearbyBusinesses']);
-        Route::get('/business/{businessId}/products', [UserDashboardController::class, 'businessProducts']);
         // Customer-side: claiming and viewing your own coupons.
         Route::post('/coupons/claim', [UserDashboardController::class, 'claimCoupon'])->middleware('throttle:claim');
         Route::get('/coupons/claimed', [UserDashboardController::class, 'getClaimedCoupons']);
+
+        // Customer-side: a seat at an event.
+        Route::post('/events/{event}/register', [EventRegistrationController::class, 'register'])
+            ->whereNumber('event')->middleware('throttle:claim');
+        Route::delete('/events/{event}/register', [EventRegistrationController::class, 'unregister'])->whereNumber('event');
+        Route::get('/my/events', [EventRegistrationController::class, 'mine']);
 
         // Business-side: the till. These sat in the plain auth:sanctum block,
         // outside both the subscription gate and the ability gate — so a
@@ -306,6 +331,34 @@ Route::middleware('maintenance')->group(function () {
                 Route::get('/onboarding', [BusinessDashboardController::class, 'onboarding']);
             });
 
+            // The team: owner and admins only.
+            Route::prefix('business/staff')->middleware('business:business.manage_staff')->group(function () {
+                Route::get('/', [BusinessStaffController::class, 'index']);
+                Route::post('/', [BusinessStaffController::class, 'store']);
+                Route::patch('/{member}', [BusinessStaffController::class, 'update'])->whereNumber('member');
+                Route::delete('/{member}', [BusinessStaffController::class, 'destroy'])->whereNumber('member');
+            });
+
+            // Events the business hosts.
+            Route::prefix('business/events')->middleware('business:business.manage_events')->group(function () {
+                Route::get('/', [EventController::class, 'index']);
+                Route::post('/', [EventController::class, 'store']);
+                Route::get('/{event}', [EventController::class, 'show'])->whereNumber('event');
+                Route::put('/{event}', [EventController::class, 'update'])->whereNumber('event');
+                Route::post('/{event}', [EventController::class, 'update'])->whereNumber('event'); // FormData with _method=PUT
+                Route::delete('/{event}', [EventController::class, 'destroy'])->whereNumber('event');
+                Route::get('/{event}/registrations', [EventController::class, 'registrations'])->whereNumber('event');
+            });
+
+            // Announcements: updates that are neither a coupon nor an event.
+            Route::prefix('business/announcements')->middleware('business:business.manage_events')->group(function () {
+                Route::get('/', [AnnouncementController::class, 'index']);
+                Route::post('/', [AnnouncementController::class, 'store']);
+                Route::put('/{announcement}', [AnnouncementController::class, 'update'])->whereNumber('announcement');
+                Route::post('/{announcement}', [AnnouncementController::class, 'update'])->whereNumber('announcement'); // FormData with _method=PUT
+                Route::delete('/{announcement}', [AnnouncementController::class, 'destroy'])->whereNumber('announcement');
+            });
+
             // Product management routes
             Route::prefix('products')->middleware('business:business.manage_offers')->group(function () {
                 Route::get('/', [ProductController::class, 'index']);
@@ -406,4 +459,11 @@ Route::middleware('maintenance')->group(function () {
 // Deliberately exempt from throttling: Stripe retries aggressively and a 429
 // would be recorded as a delivery failure.
 Route::post('/stripe/webhook', [BusinessSubscriptionController::class, 'webhook'])
+    ->withoutMiddleware('throttle:api');
+
+// Deploy health check. Outside auth and throttling on purpose: the deploy
+// script curls it right after `artisan up`, and it must answer even when the
+// API limiter is busy. It used to live only as an uncommitted commit on the
+// server, which made every pull a conflict.
+Route::get('/health', fn () => response()->json(['status' => 'ok']))
     ->withoutMiddleware('throttle:api');
