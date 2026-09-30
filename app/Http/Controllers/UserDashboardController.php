@@ -1307,6 +1307,8 @@ class UserDashboardController extends Controller
         // Only broadcast on a real transition; a retry should not re-notify.
         if (!$result['idempotent']) {
             event(new \App\Events\CouponStatusChanged($claimedCoupon));
+            // A referred shopper's first redemption is what qualifies them.
+            app(\App\Services\Referrals::class)->onShopperRedeemed((int) $claimedCoupon->user_id);
         }
 
         return response()->json([

@@ -29,6 +29,7 @@ use App\Http\Controllers\EventBrowseController;
 use App\Http\Controllers\EventRegistrationController;
 use App\Http\Controllers\FlashDealController;
 use App\Http\Controllers\AnnouncementController;
+use App\Http\Controllers\ReferralController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\BusinessDashboardController;
 use App\Http\Controllers\Public\GuestBrowseController;
@@ -199,6 +200,11 @@ Route::middleware('maintenance')->group(function () {
                 Route::get('/user-stats', [DashboardController::class, 'userStats']);
             });
 
+            // Referral rewards are applied by hand for now; this is where an
+            // admin records that, or voids an abusive one.
+            Route::get('/referrals', [ReferralController::class, 'adminIndex']);
+            Route::patch('/referrals/{referral}', [ReferralController::class, 'adminUpdate'])->whereNumber('referral');
+
             // User management routes
             Route::prefix('users')->group(function () {
                 Route::get('/', [UserController::class, 'index']);
@@ -349,6 +355,10 @@ Route::middleware('maintenance')->group(function () {
                 Route::delete('/{event}', [EventController::class, 'destroy'])->whereNumber('event');
                 Route::get('/{event}/registrations', [EventController::class, 'registrations'])->whereNumber('event');
             });
+
+            // Refer & earn: the business's code, link and who came through it.
+            Route::get('/business/referrals', [ReferralController::class, 'panel'])
+                ->middleware('business:business.view_analytics');
 
             // Announcements: updates that are neither a coupon nor an event.
             Route::prefix('business/announcements')->middleware('business:business.manage_events')->group(function () {
