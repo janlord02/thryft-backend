@@ -66,6 +66,18 @@
         </p>
     @endif
 
+    @if(isset($announcements) && $announcements->isNotEmpty())
+        <h2>Latest from {{ $public['name'] }}</h2>
+        @foreach($announcements as $note)
+            <div class="card">
+                <h3>{{ $note->title }}</h3>
+                @if($note->body)<p class="muted">{{ \Illuminate\Support\Str::limit($note->body, 200) }}</p>@endif
+                @if($note->link_url)<p><a href="{{ $note->link_url }}" rel="nofollow noopener">Read more</a></p>@endif
+                <p class="muted">{{ optional($note->published_at)->toFormattedDateString() }}</p>
+            </div>
+        @endforeach
+    @endif
+
     <h2>Current deals</h2>
 
     @forelse($coupons as $coupon)

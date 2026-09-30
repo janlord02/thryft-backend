@@ -285,6 +285,30 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * Every business this user may act for, with what they may do there.
+     * Sent to the app on /user so it can show the right tools.
+     *
+     * @return array<int, array{business_id:int,name:?string,slug:?string,role:string,abilities:array<string>}>
+     */
+    public function businessAccess(): array
+    {
+        return $this->businessMemberships()
+            ->active()
+            ->with('business')
+            ->get()
+            ->filter(fn (BusinessMember $m) => $m->business !== null)
+            ->map(fn (BusinessMember $m) => [
+                'business_id' => (int) $m->business_id,
+                'name' => $m->business->name,
+                'slug' => $m->business->slug,
+                'role' => $m->role,
+                'abilities' => $m->abilities(),
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
      * The business this user is currently acting as.
      */
     public function currentBusiness(): ?Business
