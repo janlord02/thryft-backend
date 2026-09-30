@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Public;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\PublicBusinessResource;
 use App\Http\Resources\PublicCouponResource;
+use App\Models\Announcement;
 use App\Models\Business;
 use App\Models\Coupon;
 use Illuminate\Support\Str;
@@ -45,9 +46,17 @@ class BusinessPageController extends Controller
 
         $public = (new PublicBusinessResource($business))->toArray(request());
 
+        $announcements = Announcement::query()
+            ->where('business_id', $business->id)
+            ->published()
+            ->orderByDesc('published_at')
+            ->limit(3)
+            ->get();
+
         return view('public.business', [
             'business' => $business,
             'coupons' => $coupons,
+            'announcements' => $announcements,
             'public' => $public,
             'metaTitle' => $public['name'] . ' — Thryft',
             'metaDescription' => $this->describeBusiness($public),
