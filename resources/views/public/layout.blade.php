@@ -55,6 +55,14 @@
         }
         .cover { width: 100%; border-radius: 12px; margin-bottom: 20px; }
         footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); }
+        .blk { margin: 28px 0; }
+        .blk-hero__h { font-size: 1.6rem; margin: 12px 0 4px; }
+        .blk-text { white-space: pre-line; }
+        .blk-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+        .blk-gallery img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; }
+        .blk-hours { border-collapse: collapse; }
+        .blk-hours th { text-align: left; padding: 4px 16px 4px 0; font-weight: 600; }
+        .blk-hours td { padding: 4px 0; color: var(--muted); }
     </style>
 </head>
 <body>

@@ -30,6 +30,7 @@ use App\Http\Controllers\EventRegistrationController;
 use App\Http\Controllers\FlashDealController;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\ReferralController;
+use App\Http\Controllers\BusinessPageEditorController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\BusinessDashboardController;
 use App\Http\Controllers\Public\GuestBrowseController;
@@ -354,6 +355,13 @@ Route::middleware('maintenance')->group(function () {
                 Route::post('/{event}', [EventController::class, 'update'])->whereNumber('event'); // FormData with _method=PUT
                 Route::delete('/{event}', [EventController::class, 'destroy'])->whereNumber('event');
                 Route::get('/{event}/registrations', [EventController::class, 'registrations'])->whereNumber('event');
+            });
+
+            // The page editor: blocks, validated against config/blocks.php.
+            Route::prefix('business/page')->middleware('business:business.edit_page')->group(function () {
+                Route::get('/', [BusinessPageEditorController::class, 'show']);
+                Route::put('/', [BusinessPageEditorController::class, 'update']);
+                Route::post('/media', [BusinessPageEditorController::class, 'media']);
             });
 
             // Refer & earn: the business's code, link and who came through it.
