@@ -492,6 +492,10 @@ class UserDashboardController extends Controller
                         'name' => $business->name,
                         'business_name' => $business->business_name,
                         'business_description' => $business->business_description,
+                        // The merchant-built page, resolved against live deals and events.
+                        'page_blocks' => \App\Support\PageBlocks::resolve(
+                            \App\Models\Business::where('owner_user_id', $business->id)->first() ?? new \App\Models\Business(),
+                        ),
                         'is_favorite' => $user
                             ? $user->favoriteBusinesses()->whereKey($business->id)->exists()
                             : false,

@@ -34,7 +34,14 @@ class Business extends Model
         'website',
         'logo_path',
         'cover_path',
+        'page_blocks',
+        'page_updated_at',
         'status',
+    ];
+
+    protected $casts = [
+        'page_blocks' => 'array',
+        'page_updated_at' => 'datetime',
     ];
 
     protected static function boot()
