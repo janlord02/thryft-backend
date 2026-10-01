@@ -91,10 +91,13 @@ class AuthController extends Controller
         $emailVerificationRequired = Setting::getValue('email_verification', true);
 
         if ($emailVerificationRequired) {
-            // Send verification email
-            $user->sendEmailVerificationNotification();
-
-            $message = 'User registered successfully. Please check your email for verification.';
+            // The account exists at this point. A mail outage must not turn
+            // into a 500 that leaves the person unable to sign up again
+            // because the address is now taken: tell them, and let them
+            // resend from the verification screen.
+            $message = $this->sendVerificationEmail($user)
+                ? 'User registered successfully. Please check your email for verification.'
+                : 'Account created, but the verification email could not be sent. Use "Resend" on the next screen.';
         } else {
             // Mark email as verified if verification is not required
             $user->markEmailAsVerified();
@@ -115,6 +118,27 @@ class AuthController extends Controller
                 'token_type' => 'Bearer'
             ]
         ], 201);
+    }
+
+    /**
+     * Send the verification email without letting a mail failure escape.
+     * Returns whether it went out; the failure is logged with enough to
+     * find it.
+     */
+    private function sendVerificationEmail(User $user): bool
+    {
+        try {
+            $user->sendEmailVerificationNotification();
+
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('Verification email failed at signup', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
     }
 
     /**
@@ -201,8 +225,9 @@ class AuthController extends Controller
         $emailVerificationRequired = Setting::getValue('email_verification', true);
 
         if ($emailVerificationRequired) {
-            $user->sendEmailVerificationNotification();
-            $message = 'Business account created successfully. Please check your email to verify your account.';
+            $message = $this->sendVerificationEmail($user)
+                ? 'Business account created successfully. Please check your email to verify your account.'
+                : 'Account created, but the verification email could not be sent. Use "Resend" on the next screen.';
         } else {
             $user->markEmailAsVerified();
             $message = 'Business account created successfully.';
