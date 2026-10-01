@@ -26,6 +26,7 @@ class Business extends Model
     protected $fillable = [
         'owner_user_id',
         'slug',
+        'referral_code',
         'name',
         'description',
         'phone',
@@ -33,7 +34,14 @@ class Business extends Model
         'website',
         'logo_path',
         'cover_path',
+        'page_blocks',
+        'page_updated_at',
         'status',
+    ];
+
+    protected $casts = [
+        'page_blocks' => 'array',
+        'page_updated_at' => 'datetime',
     ];
 
     protected static function boot()
@@ -44,7 +52,31 @@ class Business extends Model
             if (empty($business->slug)) {
                 $business->slug = static::generateSlug($business->name ?? 'business');
             }
+            if (empty($business->referral_code)) {
+                $business->referral_code = static::generateReferralCode($business->name ?? '');
+            }
         });
+    }
+
+    public function referrals(): HasMany
+    {
+        return $this->hasMany(Referral::class);
+    }
+
+    /**
+     * A short, shareable, permanent code: up to six letters of the name plus
+     * four random characters, e.g. FERNWO7K2Q. Fixed at creation so printed
+     * material never goes stale.
+     */
+    public static function generateReferralCode(string $name): string
+    {
+        $base = Str::upper(Str::limit(preg_replace('/[^A-Za-z0-9]/', '', $name), 6, '')) ?: 'THRYFT';
+
+        do {
+            $code = $base . Str::upper(Str::random(4));
+        } while (static::withTrashed()->where('referral_code', $code)->exists());
+
+        return $code;
     }
 
     public function owner(): BelongsTo

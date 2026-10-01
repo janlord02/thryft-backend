@@ -36,6 +36,19 @@ class UserSubscription extends Model
 {
     use HasFactory;
 
+    protected static function booted(): void
+    {
+        // A referred business qualifies on its first PAID subscription. Every
+        // path that activates one (checkout, payment confirmation, renewal
+        // webhook) ends in a save with status active, so this is the one
+        // place to watch. Free plans carry no amount and never qualify.
+        static::saved(function (UserSubscription $subscription) {
+            if ($subscription->status === 'active' && (float) $subscription->amount_paid > 0) {
+                app(\App\Services\Referrals::class)->onBusinessPaid((int) $subscription->user_id);
+            }
+        });
+    }
+
     protected $fillable = [
         'user_id',
         'subscription_id',

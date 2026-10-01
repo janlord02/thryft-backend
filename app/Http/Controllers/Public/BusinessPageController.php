@@ -8,6 +8,7 @@ use App\Http\Resources\PublicCouponResource;
 use App\Models\Announcement;
 use App\Models\Business;
 use App\Models\Coupon;
+use App\Support\PageBlocks;
 use Illuminate\Support\Str;
 
 /**
@@ -56,6 +57,7 @@ class BusinessPageController extends Controller
         return view('public.business', [
             'business' => $business,
             'coupons' => $coupons,
+            'blocks' => PageBlocks::resolve($business),
             'announcements' => $announcements,
             'public' => $public,
             'metaTitle' => $public['name'] . ' — Thryft',

@@ -42,7 +42,7 @@ class BusinessStaffController extends Controller
             ->filter(fn (BusinessMember $m) => $m->user !== null)
             ->sortBy([
                 fn ($a, $b) => (self::ROLE_RANK[$a->role] ?? 9) <=> (self::ROLE_RANK[$b->role] ?? 9),
-                fn ($a, $b) => strcasecmp($a->user->name ?? '', $b->user->name ?? ''),
+                fn ($a, $b) => strcasecmp($a->user->display_name ?? '', $b->user->display_name ?? ''),
             ])
             ->values()
             ->map(fn (BusinessMember $m) => $this->present($m, $me));
@@ -82,7 +82,7 @@ class BusinessStaffController extends Controller
             ->first();
 
         if ($membership && $membership->status === 'active') {
-            return $this->fieldError('email', "{$user->name} is already on the team.");
+            return $this->fieldError('email', "{$user->display_name} is already on the team.");
         }
 
         // A revoked or never-accepted row is reused rather than duplicated:
@@ -110,7 +110,7 @@ class BusinessStaffController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'message' => "{$user->name} has been added to the team.",
+            'message' => "{$user->display_name} has been added to the team.",
             'data' => $this->present($membership, $request->user()),
         ], 201);
     }
@@ -169,7 +169,7 @@ class BusinessStaffController extends Controller
         return [
             'id' => $m->id,
             'user_id' => $m->user_id,
-            'name' => $m->user?->name,
+            'name' => $m->user?->display_name,
             'email' => $m->user?->email,
             'avatar' => $m->user?->profile_image_url,
             'role' => $m->role,
@@ -209,7 +209,7 @@ class BusinessStaffController extends Controller
 
             app(NotificationService::class)->send(
                 title: "You've joined {$business->name}",
-                message: "{$addedBy->name} added you as {$role}. Sign in again if you don't see the business tools yet.",
+                message: "{$addedBy->display_name} added you as {$role}. Sign in again if you don't see the business tools yet.",
                 type: 'success',
                 userIds: [$membership->user_id],
                 data: [
