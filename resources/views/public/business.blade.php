@@ -55,7 +55,7 @@
         <p class="muted">{{ collect([$location['address'], $location['city'], $location['state'], $location['zipcode']])->filter()->implode(', ') }}</p>
     @endif
 
-    @if($public['description'])
+    @if(empty($blocks) && $public['description'])
         <p>{{ $public['description'] }}</p>
     @endif
 
@@ -78,6 +78,11 @@
         @endforeach
     @endif
 
+    @if(!empty($blocks))
+        @include('public.blocks', ['blocks' => $blocks, 'business' => $business])
+    @endif
+
+    @if(empty($blocks))
     <h2>Current deals</h2>
 
     @forelse($coupons as $coupon)
@@ -94,4 +99,5 @@
     @empty
         <p class="muted">No active deals right now.</p>
     @endforelse
+    @endif
 @endsection
