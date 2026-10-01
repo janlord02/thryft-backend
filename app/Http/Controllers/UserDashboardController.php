@@ -492,6 +492,10 @@ class UserDashboardController extends Controller
                         'name' => $business->name,
                         'business_name' => $business->business_name,
                         'business_description' => $business->business_description,
+                        // The merchant-built page, resolved against live deals and events.
+                        'page_blocks' => \App\Support\PageBlocks::resolve(
+                            \App\Models\Business::where('owner_user_id', $business->id)->first() ?? new \App\Models\Business(),
+                        ),
                         'is_favorite' => $user
                             ? $user->favoriteBusinesses()->whereKey($business->id)->exists()
                             : false,
@@ -1307,6 +1311,8 @@ class UserDashboardController extends Controller
         // Only broadcast on a real transition; a retry should not re-notify.
         if (!$result['idempotent']) {
             event(new \App\Events\CouponStatusChanged($claimedCoupon));
+            // A referred shopper's first redemption is what qualifies them.
+            app(\App\Services\Referrals::class)->onShopperRedeemed((int) $claimedCoupon->user_id);
         }
 
         return response()->json([

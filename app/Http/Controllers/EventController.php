@@ -132,12 +132,12 @@ class EventController extends Controller
 
         $people = $row->registrations()
             ->where('status', 'registered')
-            ->with('user:id,name,email')
+            ->with('user:id,name,firstname,lastname,email')
             ->orderBy('registered_at')
             ->get()
             ->map(fn ($r) => [
                 'id' => $r->id,
-                'name' => $r->user?->name,
+                'name' => $r->user?->display_name,
                 'email' => $r->user?->email,
                 'registered_at' => $r->registered_at,
             ]);
