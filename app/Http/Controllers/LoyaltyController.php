@@ -69,8 +69,7 @@ class LoyaltyController extends Controller
     /** A business's live programs, with the caller's card on each when they have one. */
     public function forBusiness(Request $request, int $businessId): JsonResponse
     {
-        $business = Business::query()->whereKey($businessId)->first()
-            ?? Business::query()->where('owner_user_id', $businessId)->first();
+        $business = Business::fromAppId($businessId);
 
         if (!$business || $business->status !== 'active') {
             return response()->json(['status' => 'success', 'data' => []]);

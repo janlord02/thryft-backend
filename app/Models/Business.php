@@ -220,7 +220,8 @@ class Business extends Model
             'id' => $this->id,
             'name' => $this->name,
             'owner_user_id' => $this->owner_user_id,
-            'logo_url' => $this->profile_image_url,
+            // The uploaded logo only: the owner's default avatar is a stranger's face here.
+            'logo_url' => $this->logo_path ? asset('storage/' . $this->logo_path) : null,
         ];
     }
 
@@ -267,5 +268,16 @@ class Business extends Model
             ->values()->all();
 
         return ['kind' => $this->kind, 'members' => $members, 'promotions' => $promotions];
+    }
+
+    /**
+     * The business behind an id from the consumer app, which addresses a
+     * business by its owner's user id. That is tried first: a businesses.id
+     * that happens to equal the number would otherwise be someone else's.
+     */
+    public static function fromAppId(int $id): ?self
+    {
+        return static::query()->where('owner_user_id', $id)->first()
+            ?? static::query()->whereKey($id)->first();
     }
 }

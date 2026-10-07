@@ -133,8 +133,7 @@ class MembershipController extends Controller
     /** A business's open plans, with the caller's membership when they have one. */
     public function forBusiness(Request $request, int $businessId): JsonResponse
     {
-        $business = Business::query()->whereKey($businessId)->first()
-            ?? Business::query()->where('owner_user_id', $businessId)->first();
+        $business = Business::fromAppId($businessId);
         if (!$business || $business->status !== 'active') {
             return response()->json(['status' => 'success', 'data' => ['plans' => [], 'sells_gift_certificates' => false]]);
         }
