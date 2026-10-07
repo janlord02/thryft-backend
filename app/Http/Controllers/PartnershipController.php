@@ -156,7 +156,7 @@ class PartnershipController extends Controller
             'name' => $x->name,
             'kind' => $x->kind,
             'owner_user_id' => $x->owner_user_id,
-            'logo_url' => $x->profile_image_url,
+            'logo_url' => $x->logo_path ? asset('storage/' . $x->logo_path) : null,
             'city' => $loc?->city,
             'pitch' => $x->partnership_pitch,
             'interests' => $x->partnership_interests ?: [],
