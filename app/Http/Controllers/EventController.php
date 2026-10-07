@@ -42,9 +42,9 @@ class EventController extends Controller
                 $data['image_path'] = $request->file('image')->store('events', 'public');
             }
 
-            // No venue given: the event is at the business.
+            // No venue given: the event is at the chosen location, or the main one.
             if (empty($data['address']) && empty($data['latitude'])) {
-                $data = array_merge($data, $this->businessVenue($business));
+                $data = array_merge($data, $this->businessVenue($business, $data['location_id'] ?? null));
             }
 
             if (($data['status'] ?? 'draft') === 'published') {
@@ -159,6 +159,7 @@ class EventController extends Controller
             'starts_at' => ['required', 'date'],
             'ends_at' => ['nullable', 'date', 'after:starts_at'],
             'timezone' => ['nullable', 'timezone'],
+            'location_id' => ['nullable', 'integer', Rule::exists('business_locations', 'id')->where('business_id', $request->attributes->get('business')?->id)],
             'venue_name' => ['nullable', 'string', 'max:160'],
             'address' => ['nullable', 'string', 'max:255'],
             'city' => ['nullable', 'string', 'max:120'],
@@ -185,9 +186,9 @@ class EventController extends Controller
         return $data;
     }
 
-    private function businessVenue(Business $business): array
+    private function businessVenue(Business $business, ?int $locationId = null): array
     {
-        $location = $business->primaryLocation;
+        $location = ($locationId ? $business->locations()->find($locationId) : null) ?? $business->primaryLocation;
         $owner = $business->owner;
 
         return [
