@@ -30,6 +30,7 @@ use App\Http\Controllers\EventRegistrationController;
 use App\Http\Controllers\FlashDealController;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\ReferralController;
+use App\Http\Controllers\BusinessLocationController;
 use App\Http\Controllers\BusinessPageEditorController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\BusinessDashboardController;
@@ -358,6 +359,15 @@ Route::middleware('maintenance')->group(function () {
             });
 
             // The page editor: blocks, validated against config/blocks.php.
+            // Locations. Anyone on the team can read them (to pin an offer or
+            // event to one); changing them takes manage_locations.
+            Route::get('/business/locations', [BusinessLocationController::class, 'index'])->middleware('business');
+            Route::prefix('business/locations')->middleware('business:business.manage_locations')->group(function () {
+                Route::post('/', [BusinessLocationController::class, 'store']);
+                Route::put('/{location}', [BusinessLocationController::class, 'update'])->whereNumber('location');
+                Route::delete('/{location}', [BusinessLocationController::class, 'destroy'])->whereNumber('location');
+            });
+
             Route::prefix('business/page')->middleware('business:business.edit_page')->group(function () {
                 Route::get('/', [BusinessPageEditorController::class, 'show']);
                 Route::put('/', [BusinessPageEditorController::class, 'update']);

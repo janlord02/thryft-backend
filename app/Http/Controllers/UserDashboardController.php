@@ -484,6 +484,8 @@ class UserDashboardController extends Controller
             $productsWithCoupons = $formattedProducts->where('has_coupons', true)->values();
             $allProducts = $formattedProducts->values();
 
+            $entity = \App\Models\Business::where('owner_user_id', $business->id)->first() ?? new \App\Models\Business();
+
             return response()->json([
                 'status' => 'success',
                 'data' => [
@@ -493,13 +495,13 @@ class UserDashboardController extends Controller
                         'business_name' => $business->business_name,
                         'business_description' => $business->business_description,
                         // The merchant-built page, resolved against live deals and events.
-                        'page_blocks' => \App\Support\PageBlocks::resolve(
-                            \App\Models\Business::where('owner_user_id', $business->id)->first() ?? new \App\Models\Business(),
-                        ),
+                        'page_blocks' => \App\Support\PageBlocks::resolve($entity),
+                        'locations' => $entity->exists ? $entity->publicLocations() : [],
                         'is_favorite' => $user
                             ? $user->favoriteBusinesses()->whereKey($business->id)->exists()
                             : false,
-                        'email' => $business->email,
+                        // The business's published contact email, never the owner's login.
+                        'email' => $entity->email,
                         'phone' => $business->phone,
                         'address' => $business->address,
                         'city' => $business->city,

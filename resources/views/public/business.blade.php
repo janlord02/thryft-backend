@@ -107,4 +107,17 @@
         <p class="muted">No active deals right now.</p>
     @endforelse
     @endif
+
+    @if(count($public['locations'] ?? []) > 1)
+        <h2>Locations</h2>
+        @foreach($public['locations'] as $place)
+            <div class="card">
+                <h3>{{ $place['label'] }}</h3>
+                <p class="muted">{{ collect([$place['address'], $place['city'], $place['state'], $place['zipcode']])->filter()->implode(', ') }}</p>
+                @foreach($place['hours'] as $row)
+                    <p class="muted">{{ $row['label'] }} {{ $row['value'] }}</p>
+                @endforeach
+            </div>
+        @endforeach
+    @endif
 @endsection

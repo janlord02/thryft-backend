@@ -182,4 +182,26 @@ class Business extends Model
 
         return $slug;
     }
+
+    /** Every location, main one first, in the shape the app and the public page show. */
+    public function publicLocations(): array
+    {
+        return $this->locations()
+            ->orderByDesc('is_primary')
+            ->orderBy('label')
+            ->get()
+            ->map(fn (BusinessLocation $l) => [
+                'id' => $l->id,
+                'label' => $l->label,
+                'is_primary' => (bool) $l->is_primary,
+                'address' => $l->address,
+                'city' => $l->city,
+                'state' => $l->state,
+                'zipcode' => $l->zipcode,
+                'country' => $l->country,
+                'latitude' => $l->latitude,
+                'longitude' => $l->longitude,
+                'hours' => $l->hours ?: [],
+            ])->values()->all();
+    }
 }
