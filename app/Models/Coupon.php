@@ -164,7 +164,8 @@ class Coupon extends Model
     public function getFormattedDiscountAttribute()
     {
         if ($this->discount_type === 'percentage') {
-            return $this->discount_percentage . '%';
+            // 15.00 → "15%", 12.50 → "12.5%".
+            return rtrim(rtrim(number_format((float) $this->discount_percentage, 2, '.', ''), '0'), '.') . '%';
         }
         return '$' . number_format((float) $this->discount_amount, 2);
     }

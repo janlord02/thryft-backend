@@ -14,8 +14,8 @@
     'description' => $event->description,
     'url' => url()->current(),
     'image' => $public['image_url'],
-    'startDate' => $event->starts_at->toIso8601String(),
-    'endDate' => optional($event->ends_at)->toIso8601String(),
+    'startDate' => $event->localStartsAt()->toIso8601String(),
+    'endDate' => optional($event->localEndsAt())->toIso8601String(),
     'eventStatus' => 'https://schema.org/EventScheduled',
     'eventAttendanceMode' => 'https://schema.org/OfflineEventAttendanceMode',
     'location' => array_filter([
@@ -63,7 +63,7 @@
     @endif
 
     <h1>{{ $event->title }}</h1>
-    <p class="discount">{{ $when }}@if($event->ends_at) – {{ $event->ends_at->format('g:i A') }}@endif</p>
+    <p class="discount">{{ $when }}@if($event->ends_at) – {{ $event->localEndsAt()->format('g:i A') }}@endif</p>
 
     @if($where)
         <p class="muted">{{ $where }}</p>

@@ -123,7 +123,7 @@ class ShopperAlerts
         try {
             $this->notifications->send(
                 title: "New event at {$businessName}",
-                message: "{$event->title} — {$event->starts_at->format('D, M j \a\t g:i A')}. Save your spot.",
+                message: "{$event->title} — {$event->localStartsAt()->format('D, M j \a\t g:i A')}. Save your spot.",
                 type: 'info',
                 userIds: $shopperIds,
                 data: [

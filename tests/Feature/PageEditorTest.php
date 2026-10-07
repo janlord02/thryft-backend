@@ -166,5 +166,9 @@ class PageEditorTest extends TestCase
         $this->assertStringContainsString('Order online', $html);
         $this->assertStringContainsString('https://order.example.com', $html);
         $this->assertStringNotContainsString('<h2>Current deals</h2>', $html);
+        // The hero is the page header: one heading, one photo.
+        $this->assertSame(1, substr_count($html, '<h1'));
+        $this->assertStringContainsString('<h1 class="blk-hero__h">Fernwood Coffee</h1>', $html);
+        $this->assertSame(1, substr_count($html, 'class="cover"'));
     }
 }
