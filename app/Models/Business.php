@@ -37,6 +37,10 @@ class Business extends Model
         'page_blocks',
         'page_updated_at',
         'sells_gift_certificates',
+        'kind',
+        'open_to_partnerships',
+        'partnership_interests',
+        'partnership_pitch',
         'status',
     ];
 
@@ -44,6 +48,8 @@ class Business extends Model
         'page_blocks' => 'array',
         'page_updated_at' => 'datetime',
         'sells_gift_certificates' => 'boolean',
+        'open_to_partnerships' => 'boolean',
+        'partnership_interests' => 'array',
     ];
 
     protected static function boot()
@@ -216,5 +222,50 @@ class Business extends Model
             'owner_user_id' => $this->owner_user_id,
             'logo_url' => $this->profile_image_url,
         ];
+    }
+
+    public function isOrganization(): bool
+    {
+        return $this->kind === 'organization';
+    }
+
+    /** Businesses that belong to this organization. */
+    public function memberBusinesses(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(self::class, 'organization_members', 'organization_id', 'business_id')
+            ->withPivot('status')
+            ->withTimestamps();
+    }
+
+    /** Organizations this business belongs to. */
+    public function organizations(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(self::class, 'organization_members', 'business_id', 'organization_id')
+            ->withPivot('status')
+            ->withTimestamps();
+    }
+
+    /**
+     * What a business page shows about working with others: an
+     * organization's member businesses, and running promotions this
+     * business organizes or takes part in.
+     */
+    public function communityPayload(): array
+    {
+        $members = $this->isOrganization()
+            ? $this->memberBusinesses()->wherePivot('status', 'active')->where('businesses.status', 'active')->with(['primaryLocation', 'owner'])->orderBy('name')->get()
+                ->map(fn (Business $b) => \App\Http\Controllers\PartnershipController::cardFor($b))->values()->all()
+            : [];
+
+        $promotions = Promotion::query()->running()
+            ->where(fn ($q) => $q->where('organizer_business_id', $this->id)
+                ->orWhereHas('participants', fn ($p) => $p->where('business_id', $this->id)->where('status', 'accepted')))
+            ->orderByRaw('ends_at IS NULL, ends_at')
+            ->limit(10)
+            ->get()
+            ->map(fn (Promotion $p) => ['slug' => $p->slug, 'title' => $p->title, 'type' => $p->type, 'ends_at' => $p->ends_at, 'public_url' => $p->public_url])
+            ->values()->all();
+
+        return ['kind' => $this->kind, 'members' => $members, 'promotions' => $promotions];
     }
 }

@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Public\BusinessPageController;
 use App\Http\Controllers\Public\EventPageController;
+use App\Http\Controllers\Public\PromotionPageController;
 use App\Http\Controllers\Public\SitemapController;
 use Illuminate\Support\Facades\Route;
 
@@ -26,3 +27,5 @@ Route::prefix('b')->group(function () {
 });
 
 Route::get('/e/{slug}', [EventPageController::class, 'show'])->name('public.event');
+
+Route::get('/p/{slug}', [PromotionPageController::class, 'show'])->name('public.promotion');

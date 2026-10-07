@@ -108,6 +108,26 @@
     @endforelse
     @endif
 
+    @if(!empty($community['members']))
+        <h2>Member businesses</h2>
+        @foreach($community['members'] as $member)
+            <div class="card">
+                <h3><a href="{{ route('public.business', ['business' => $member['slug']]) }}">{{ $member['name'] }}</a></h3>
+                @if($member['city'])<p class="muted">{{ $member['city'] }}</p>@endif
+            </div>
+        @endforeach
+    @endif
+
+    @if(!empty($community['promotions']))
+        <h2>Promotions</h2>
+        @foreach($community['promotions'] as $promo)
+            <div class="card">
+                <h3><a href="{{ $promo['public_url'] }}">{{ $promo['title'] }}</a></h3>
+                @if($promo['ends_at'])<p class="muted">Until {{ \Carbon\Carbon::parse($promo['ends_at'])->toFormattedDateString() }}</p>@endif
+            </div>
+        @endforeach
+    @endif
+
     @if(count($public['locations'] ?? []) > 1)
         <h2>Locations</h2>
         @foreach($public['locations'] as $place)
