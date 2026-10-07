@@ -31,6 +31,9 @@ use App\Http\Controllers\FlashDealController;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\ReferralController;
 use App\Http\Controllers\BusinessLocationController;
+use App\Http\Controllers\LoyaltyController;
+use App\Http\Controllers\TillController;
+use App\Http\Controllers\WalletController;
 use App\Http\Controllers\BusinessPageEditorController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\BusinessDashboardController;
@@ -105,6 +108,7 @@ Route::middleware('maintenance')->group(function () {
         Route::get('/events/{slug}', [EventBrowseController::class, 'show']);
         Route::get('/flash-deals', [FlashDealController::class, 'index']);
         Route::get('/business/{businessId}/announcements', [AnnouncementController::class, 'forBusiness'])->whereNumber('businessId');
+        Route::get('/business/{businessId}/loyalty', [LoyaltyController::class, 'forBusiness'])->whereNumber('businessId');
     });
 
     // Protected routes
@@ -166,6 +170,10 @@ Route::middleware('maintenance')->group(function () {
             ->whereNumber('event')->middleware('throttle:claim');
         Route::delete('/events/{event}/register', [EventRegistrationController::class, 'unregister'])->whereNumber('event');
         Route::get('/my/events', [EventRegistrationController::class, 'mine']);
+
+        // Wallet: loyalty cards (and, later, gift certificates and memberships)
+        Route::post('/loyalty/{program}/join', [LoyaltyController::class, 'join'])->whereNumber('program')->middleware('throttle:claim');
+        Route::get('/my/wallet', [WalletController::class, 'index']);
 
         // Business-side: the till. These sat in the plain auth:sanctum block,
         // outside both the subscription gate and the ability gate — so a
@@ -359,6 +367,20 @@ Route::middleware('maintenance')->group(function () {
             });
 
             // The page editor: blocks, validated against config/blocks.php.
+            // Loyalty programs
+            Route::prefix('business/loyalty')->middleware('business:business.manage_offers')->group(function () {
+                Route::get('/', [LoyaltyController::class, 'index']);
+                Route::post('/', [LoyaltyController::class, 'store']);
+                Route::put('/{program}', [LoyaltyController::class, 'update'])->whereNumber('program');
+                Route::delete('/{program}', [LoyaltyController::class, 'destroy'])->whereNumber('program');
+            });
+
+            // Codes shoppers show at the till: loyalty cards, gift certificates, memberships
+            Route::prefix('business/till')->middleware('business:business.redeem')->group(function () {
+                Route::get('/{code}', [TillController::class, 'show']);
+                Route::post('/{code}', [TillController::class, 'act'])->middleware('throttle:redeem');
+            });
+
             // Locations. Anyone on the team can read them (to pin an offer or
             // event to one); changing them takes manage_locations.
             Route::get('/business/locations', [BusinessLocationController::class, 'index'])->middleware('business');
