@@ -158,6 +158,7 @@ class EventController extends Controller
             'description' => ['nullable', 'string', 'max:5000'],
             'starts_at' => ['required', 'date'],
             'ends_at' => ['nullable', 'date', 'after:starts_at'],
+            'timezone' => ['nullable', 'timezone'],
             'venue_name' => ['nullable', 'string', 'max:160'],
             'address' => ['nullable', 'string', 'max:255'],
             'city' => ['nullable', 'string', 'max:120'],
@@ -215,7 +216,7 @@ class EventController extends Controller
         try {
             app(NotificationService::class)->send(
                 title: "Cancelled: {$event->title}",
-                message: "{$event->business?->name} has cancelled this event on {$event->starts_at->format('M j')}. Sorry for the change of plans.",
+                message: "{$event->business?->name} has cancelled this event on {$event->localStartsAt()->format('M j')}. Sorry for the change of plans.",
                 type: 'warning',
                 userIds: $userIds,
                 data: [

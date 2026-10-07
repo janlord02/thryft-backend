@@ -121,6 +121,7 @@ class PageBlocks
                             'title' => $e->title,
                             'starts_at' => $e->starts_at,
                             'ends_at' => $e->ends_at,
+                            'timezone' => $e->zone(),
                             'venue_name' => $e->venue_name,
                             'city' => $e->city,
                             'image_url' => $e->image_url,

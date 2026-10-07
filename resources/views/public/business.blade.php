@@ -5,6 +5,9 @@
     // BusinessPageController. Metadata is NOT declared as sections: the layout
     // renders it with {{ }}, because @yield is unescaped.
     $location = $public['location'] ?? null;
+    // A page that opens with a Hero block brings its own photo and heading;
+    // printing the cover and name above it showed both twice.
+    $opensWithHero = !empty($blocks) && ($blocks[0]['type'] ?? null) === 'hero';
 @endphp
 
 @push('structured_data')
@@ -45,11 +48,15 @@
 @endpush
 
 @section('content')
-    @if($public['cover_url'])
-        <img class="cover" src="{{ $public['cover_url'] }}" alt="{{ $public['name'] }}">
-    @endif
+    @if($opensWithHero)
+        @include('public.blocks', ['blocks' => [array_shift($blocks)], 'business' => $business, 'pageHeading' => true])
+    @else
+        @if($public['cover_url'])
+            <img class="cover" src="{{ $public['cover_url'] }}" alt="{{ $public['name'] }}">
+        @endif
 
-    <h1>{{ $public['name'] }}</h1>
+        <h1>{{ $public['name'] }}</h1>
+    @endif
 
     @if($location && ($location['city'] || $location['address']))
         <p class="muted">{{ collect([$location['address'], $location['city'], $location['state'], $location['zipcode']])->filter()->implode(', ') }}</p>

@@ -292,4 +292,35 @@ class EventsTest extends TestCase
         $xml = $this->get('/sitemap.xml')->assertStatus(200)->getContent();
         $this->assertStringContainsString("/e/{$event->slug}", $xml);
     }
+
+    public function test_times_render_in_the_hosts_zone_not_utc()
+    {
+        // 6:30 PM in Chicago (CDT, UTC-5) is 23:30 UTC.
+        $this->actingAs($this->owner, 'sanctum')->postJson('/api/business/events', [
+            'title' => 'Latte Art Night',
+            'starts_at' => '2030-10-11T23:30:00Z',
+            'ends_at' => '2030-10-12T01:30:00Z',
+            'timezone' => 'America/Chicago',
+            'status' => 'published',
+        ])->assertStatus(201);
+
+        $event = Event::query()->where('title', 'Latte Art Night')->firstOrFail();
+        $this->assertSame('America/Chicago', $event->timezone);
+
+        $html = $this->get("/e/{$event->slug}")->assertStatus(200)->getContent();
+        $this->assertStringContainsString('Fri, Oct 11 at 6:30 PM', $html);
+        $this->assertStringContainsString('8:30 PM', $html);
+        $this->assertStringContainsString('2030-10-11T18:30:00-05:00', $html);
+
+        $this->getJson("/api/events/{$event->slug}")->assertJsonPath('data.timezone', 'America/Chicago');
+    }
+
+    public function test_an_unknown_zone_is_refused()
+    {
+        $this->actingAs($this->owner, 'sanctum')->postJson('/api/business/events', [
+            'title' => 'Somewhere',
+            'starts_at' => '2030-10-11T23:30:00Z',
+            'timezone' => 'Mars/Olympus',
+        ])->assertStatus(422)->assertJsonValidationErrors('timezone');
+    }
 }
