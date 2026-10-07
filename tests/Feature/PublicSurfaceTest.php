@@ -243,4 +243,19 @@ class PublicSurfaceTest extends TestCase
         $this->getJson('/api/public/deals')->assertJsonCount(0, 'data');
         $this->get('/sitemap.xml')->assertDontSee("/deals/{$coupon->slug}", false);
     }
+
+    public function test_public_pages_use_the_brand_colour_and_refuse_anything_but_hex()
+    {
+        $business = Business::factory()->create();
+
+        \App\Models\Setting::query()->updateOrCreate(['key' => 'primary'], ['value' => '#7B1F2A', 'type' => 'string', 'group' => 'theme']);
+        \Illuminate\Support\Facades\Cache::flush();
+        $this->assertStringContainsString('--accent:#7B1F2A', $this->get("/b/{$business->slug}")->getContent());
+
+        \App\Models\Setting::query()->where('key', 'primary')->update(['value' => 'red;}body{display:none']);
+        \Illuminate\Support\Facades\Cache::flush();
+        $html = $this->get("/b/{$business->slug}")->getContent();
+        $this->assertStringContainsString('--accent:#0f766e', $html);
+        $this->assertStringNotContainsString('display:none', $html);
+    }
 }
