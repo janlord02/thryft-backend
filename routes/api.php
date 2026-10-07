@@ -31,6 +31,7 @@ use App\Http\Controllers\FlashDealController;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\ReferralController;
 use App\Http\Controllers\BusinessLocationController;
+use App\Http\Controllers\FeaturedController;
 use App\Http\Controllers\GiftCertificateController;
 use App\Http\Controllers\LoyaltyController;
 use App\Http\Controllers\MembershipController;
@@ -115,6 +116,7 @@ Route::middleware('maintenance')->group(function () {
         Route::get('/business/{businessId}/loyalty', [LoyaltyController::class, 'forBusiness'])->whereNumber('businessId');
         Route::get('/business/{businessId}/memberships', [MembershipController::class, 'forBusiness'])->whereNumber('businessId');
         Route::get('/promotions', [PromotionController::class, 'running']);
+        Route::get('/featured', [FeaturedController::class, 'showing']);
         Route::get('/promotions/{slug}', [PromotionController::class, 'show']);
     });
 
@@ -420,6 +422,13 @@ Route::middleware('maintenance')->group(function () {
                 Route::post('/business/promotions/{promotion}/participate', [PromotionController::class, 'participate'])->whereNumber('promotion');
                 Route::put('/business/promotions/{promotion}/participants/{participant}', [PromotionController::class, 'arrange'])->whereNumber(['promotion', 'participant']);
                 Route::put('/business/promotions/{promotion}/status', [PromotionController::class, 'setStatus'])->whereNumber('promotion');
+            });
+
+            // Featured placement (paid to Thryft by card)
+            Route::prefix('business/featured')->middleware('business:business.manage_billing')->group(function () {
+                Route::get('/', [FeaturedController::class, 'index']);
+                Route::post('/', [FeaturedController::class, 'store']);
+                Route::post('/{placement}/confirm', [FeaturedController::class, 'confirm'])->whereNumber('placement');
             });
 
             // Codes shoppers show at the till: loyalty cards, gift certificates, memberships
