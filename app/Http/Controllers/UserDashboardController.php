@@ -499,6 +499,7 @@ class UserDashboardController extends Controller
                         // The merchant-built page, resolved against live deals and events.
                         'page_blocks' => \App\Support\PageBlocks::resolve($entity),
                         'locations' => $entity->exists ? $entity->publicLocations() : [],
+                        'community' => $entity->exists ? $entity->communityPayload() : ['kind' => 'business', 'members' => [], 'promotions' => []],
                         'is_favorite' => $user
                             ? $user->favoriteBusinesses()->whereKey($business->id)->exists()
                             : false,
@@ -592,6 +593,16 @@ class UserDashboardController extends Controller
                 'status' => 'error',
                 'message' => 'This offer is for members. Ask the business about joining.',
                 'code' => 'members_only',
+            ], 403);
+        }
+
+        // A partner promotion can hold this offer back until the shopper has
+        // used the one that unlocks it.
+        if ($reason = \App\Http\Controllers\PromotionController::lockReason($coupon, $user->id)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $reason,
+                'code' => 'promotion_locked',
             ], 403);
         }
 
