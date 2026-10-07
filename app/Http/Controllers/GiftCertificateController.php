@@ -83,8 +83,7 @@ class GiftCertificateController extends Controller
     /** A shopper asks for one; they pay when they show the code at the counter. */
     public function request(Request $request, int $businessId): JsonResponse
     {
-        $business = Business::query()->whereKey($businessId)->first()
-            ?? Business::query()->where('owner_user_id', $businessId)->first();
+        $business = Business::fromAppId($businessId);
         abort_unless($business && $business->status === 'active' && $business->sells_gift_certificates, 404, 'This business does not sell gift certificates on Thryft.');
 
         $user = $request->user();

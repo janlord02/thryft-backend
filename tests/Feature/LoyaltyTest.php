@@ -129,4 +129,16 @@ class LoyaltyTest extends TestCase
             'title' => 'Mine', 'reward' => 'x', 'stamps_required' => 5,
         ])->assertStatus(403);
     }
+
+    public function test_the_app_id_is_the_owners_even_when_it_matches_another_business_id()
+    {
+        // A newer owner whose business id differs from their user id, while
+        // some other business happens to have the id equal to that user id.
+        $owner = User::factory()->create(['role' => 'business']);
+        Business::factory()->create(['id' => $owner->id]);
+        $theirs = Business::factory()->create(['id' => $owner->id + 500, 'owner_user_id' => $owner->id]);
+        \App\Models\LoyaltyProgram::create(['business_id' => $theirs->id, 'title' => 'Theirs', 'reward' => 'x', 'stamps_required' => 3]);
+
+        $this->getJson("/api/business/{$owner->id}/loyalty")->assertJsonCount(1, 'data')->assertJsonPath('data.0.title', 'Theirs');
+    }
 }
