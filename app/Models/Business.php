@@ -36,12 +36,14 @@ class Business extends Model
         'cover_path',
         'page_blocks',
         'page_updated_at',
+        'sells_gift_certificates',
         'status',
     ];
 
     protected $casts = [
         'page_blocks' => 'array',
         'page_updated_at' => 'datetime',
+        'sells_gift_certificates' => 'boolean',
     ];
 
     protected static function boot()
@@ -203,5 +205,16 @@ class Business extends Model
                 'longitude' => $l->longitude,
                 'hours' => $l->hours ?: [],
             ])->values()->all();
+    }
+
+    /** Who a wallet item is from, as the shopper's wallet shows it. */
+    public function walletSummary(): array
+    {
+        return [
+            'id' => $this->id,
+            'name' => $this->name,
+            'owner_user_id' => $this->owner_user_id,
+            'logo_url' => $this->profile_image_url,
+        ];
     }
 }

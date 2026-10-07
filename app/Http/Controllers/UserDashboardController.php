@@ -366,6 +366,7 @@ class UserDashboardController extends Controller
                         'is_active' => $coupon->is_active,
                         'is_valid' => $coupon->is_valid,
                         'can_be_used' => $coupon->canBeClaimed(),
+                            'members_only' => (bool) $coupon->members_only,
                         'is_claimed_by_user' => $isClaimedByUser,
                         'claimed_at' => $claimedAt,
                         'product_id' => null, // Will be set if attached to a product
@@ -468,6 +469,7 @@ class UserDashboardController extends Controller
                             'is_active' => $coupon->is_active,
                             'is_valid' => $coupon->is_valid,
                             'can_be_used' => $coupon->canBeClaimed(),
+                            'members_only' => (bool) $coupon->members_only,
                             'is_claimed_by_user' => $isClaimedByUser,
                             'claimed_at' => $claimedAt,
                             'product_id' => $product->id,
@@ -582,6 +584,15 @@ class UserDashboardController extends Controller
                 'status' => 'error',
                 'message' => 'Coupon is no longer available',
             ], 400);
+        }
+
+        // Members-only offers need a current membership at that business.
+        if ($coupon->members_only && !\App\Models\Membership::holds($user->id, (int) $coupon->business_id)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This offer is for members. Ask the business about joining.',
+                'code' => 'members_only',
+            ], 403);
         }
 
         // product_id used to be written straight through from the request, so a

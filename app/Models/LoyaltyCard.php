@@ -41,12 +41,7 @@ class LoyaltyCard extends Model
             'stamps_required' => $program->stamps_required,
             'rewards_available' => $this->rewards_available,
             'is_active' => (bool) $program->is_active,
-            'business' => [
-                'id' => $program->business->id,
-                'name' => $program->business->name,
-                'owner_user_id' => $program->business->owner_user_id,
-                'logo_url' => $program->business->profile_image_url,
-            ],
+            'business' => $program->business->walletSummary(),
         ];
     }
 }
