@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\Business;
+use App\Models\GiftCertificate;
 use App\Models\LoyaltyCard;
+use App\Models\Membership;
 use App\Support\WalletCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -11,7 +13,7 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * The Scan page's second job: a code a shopper shows for something they
- * hold — a loyalty card today, gift certificates and memberships next.
+ * hold — a loyalty card, a gift certificate or a membership.
  * Behind business:business.redeem, so front-of-house staff can use it.
  * A code from another business reads as not found.
  */
@@ -35,6 +37,8 @@ class TillController extends Controller
         $message = match ([$kind, $data['action']]) {
             ['LOY', 'stamp'] => $this->stamp($row, $request->user()->id),
             ['LOY', 'redeem'] => $this->redeemReward($row, $request->user()->id),
+            ['GIFT', 'paid'] => $this->giftPaid($row),
+            ['GIFT', 'use'] => $this->giftUse($row, (int) $request->validate(['amount_cents' => ['required', 'integer', 'min:1']])['amount_cents'], $request->user()->id),
             default => abort(422, 'That action does not apply to this code.'),
         };
 
@@ -87,6 +91,30 @@ class TillController extends Controller
         });
     }
 
+    private function giftPaid(GiftCertificate $gift): string
+    {
+        $moved = GiftCertificate::query()->whereKey($gift->id)->where('status', 'pending_payment')->update(['status' => 'active', 'updated_at' => now()]);
+        abort_unless($moved, 422, 'This gift certificate is already paid for.');
+
+        GiftCertificateController::markPaid($gift->fresh());
+
+        return 'Paid. The gift certificate is live' . ($gift->recipient_name ? " and on its way to {$gift->recipient_name}." : '.');
+    }
+
+    private function giftUse(GiftCertificate $gift, int $cents, int $staffId): string
+    {
+        return DB::transaction(function () use ($gift, $cents, $staffId) {
+            $gift = GiftCertificate::query()->lockForUpdate()->findOrFail($gift->id);
+            abort_unless($gift->isUsable(), 422, $gift->statusNote() . '.');
+            abort_if($cents > $gift->balance_cents, 422, 'That is more than is left on it ($' . number_format($gift->balance_cents / 100, 2) . ').');
+
+            $gift->update(['balance_cents' => $gift->balance_cents - $cents]);
+            DB::table('gift_certificate_uses')->insert(['gift_certificate_id' => $gift->id, 'amount_cents' => $cents, 'staff_user_id' => $staffId, 'created_at' => now()]);
+
+            return '$' . number_format($cents / 100, 2) . ' taken off. $' . number_format($gift->balance_cents / 100, 2) . ' left.';
+        });
+    }
+
     /** @return array{0: string, 1: mixed} */
     private function find(Request $request, string $code): array
     {
@@ -101,6 +129,8 @@ class TillController extends Controller
                 ->whereHas('program', fn ($q) => $q->where('business_id', $business->id))
                 ->with(['program', 'user'])
                 ->first(),
+            'GIFT' => GiftCertificate::query()->where('code', $code)->where('business_id', $business->id)->with(['recipient', 'purchaser'])->first(),
+            'MEM' => Membership::query()->where('code', $code)->where('business_id', $business->id)->with(['plan', 'user'])->first(),
             default => null,
         };
 
@@ -125,6 +155,31 @@ class TillController extends Controller
                     $row->program->is_active ? ['action' => 'stamp', 'label' => 'Add a stamp'] : null,
                     $row->rewards_available > 0 ? ['action' => 'redeem', 'label' => 'Give the reward'] : null,
                 ])),
+            ],
+            'GIFT' => [
+                'kind' => 'gift',
+                'code' => $row->code,
+                'title' => ($row->recipient_name ?: 'Gift certificate') . ($row->from_name ? " · from {$row->from_name}" : ''),
+                'customer' => ($row->recipient ?? $row->purchaser)?->display_name ?? $row->recipient_name,
+                'initial_cents' => $row->initial_cents,
+                'balance_cents' => $row->balance_cents,
+                'status_note' => $row->status === 'pending_payment'
+                    ? 'Take $' . number_format($row->initial_cents / 100, 2) . ', then mark it paid.'
+                    : $row->statusNote(),
+                'actions' => array_values(array_filter([
+                    $row->status === 'pending_payment' ? ['action' => 'paid', 'label' => 'Payment taken — activate'] : null,
+                    $row->isUsable() ? ['action' => 'use', 'label' => 'Take it off the bill', 'needs_amount' => true] : null,
+                ])),
+            ],
+            'MEM' => [
+                'kind' => 'membership',
+                'code' => $row->code,
+                'title' => $row->plan->name,
+                'customer' => $row->user?->display_name,
+                'is_active' => $row->isCurrent(),
+                'status_note' => $row->statusNote(),
+                'benefits' => $row->plan->benefits,
+                'actions' => [],
             ],
         };
     }

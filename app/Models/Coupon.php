@@ -41,6 +41,7 @@ class Coupon extends Model
         'is_active',
         'is_featured',
         'is_flash',
+        'members_only',
         'followers_notified_at',
         'terms_conditions',
     ];
@@ -60,6 +61,7 @@ class Coupon extends Model
         'is_active' => 'boolean',
         'is_featured' => 'boolean',
         'is_flash' => 'boolean',
+        'members_only' => 'boolean',
         'followers_notified_at' => 'datetime',
         'terms_conditions' => 'array',
     ];

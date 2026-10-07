@@ -33,6 +33,7 @@ class PublicCouponResource extends JsonResource
             'discount_amount' => $this->resource->discount_amount,
             'discount_percentage' => $this->resource->discount_percentage,
             'formatted_discount' => $this->resource->formatted_discount,
+            'members_only' => (bool) $this->resource->members_only,
             'minimum_amount' => $this->resource->minimum_amount,
             'banner_url' => $this->resource->banner_image
                 ? asset('storage/' . $this->resource->banner_image)

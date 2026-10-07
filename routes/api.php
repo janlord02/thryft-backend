@@ -31,7 +31,9 @@ use App\Http\Controllers\FlashDealController;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\ReferralController;
 use App\Http\Controllers\BusinessLocationController;
+use App\Http\Controllers\GiftCertificateController;
 use App\Http\Controllers\LoyaltyController;
+use App\Http\Controllers\MembershipController;
 use App\Http\Controllers\TillController;
 use App\Http\Controllers\WalletController;
 use App\Http\Controllers\BusinessPageEditorController;
@@ -109,6 +111,7 @@ Route::middleware('maintenance')->group(function () {
         Route::get('/flash-deals', [FlashDealController::class, 'index']);
         Route::get('/business/{businessId}/announcements', [AnnouncementController::class, 'forBusiness'])->whereNumber('businessId');
         Route::get('/business/{businessId}/loyalty', [LoyaltyController::class, 'forBusiness'])->whereNumber('businessId');
+        Route::get('/business/{businessId}/memberships', [MembershipController::class, 'forBusiness'])->whereNumber('businessId');
     });
 
     // Protected routes
@@ -174,6 +177,7 @@ Route::middleware('maintenance')->group(function () {
         // Wallet: loyalty cards (and, later, gift certificates and memberships)
         Route::post('/loyalty/{program}/join', [LoyaltyController::class, 'join'])->whereNumber('program')->middleware('throttle:claim');
         Route::get('/my/wallet', [WalletController::class, 'index']);
+        Route::post('/business/{businessId}/gift-certificates', [GiftCertificateController::class, 'request'])->whereNumber('businessId')->middleware('throttle:claim');
 
         // Business-side: the till. These sat in the plain auth:sanctum block,
         // outside both the subscription gate and the ability gate — so a
@@ -373,6 +377,23 @@ Route::middleware('maintenance')->group(function () {
                 Route::post('/', [LoyaltyController::class, 'store']);
                 Route::put('/{program}', [LoyaltyController::class, 'update'])->whereNumber('program');
                 Route::delete('/{program}', [LoyaltyController::class, 'destroy'])->whereNumber('program');
+            });
+
+            // Gift certificates (paid for at the business)
+            Route::prefix('business/gift-certificates')->middleware('business:business.manage_offers')->group(function () {
+                Route::get('/', [GiftCertificateController::class, 'index']);
+                Route::post('/', [GiftCertificateController::class, 'store']);
+                Route::put('/settings', [GiftCertificateController::class, 'settings']);
+                Route::post('/{gift}/void', [GiftCertificateController::class, 'void'])->whereNumber('gift');
+            });
+
+            // Membership plans and members (paid for at the business)
+            Route::prefix('business/memberships')->middleware('business:business.manage_offers')->group(function () {
+                Route::get('/', [MembershipController::class, 'plans']);
+                Route::post('/plans', [MembershipController::class, 'storePlan']);
+                Route::put('/plans/{plan}', [MembershipController::class, 'updatePlan'])->whereNumber('plan');
+                Route::post('/plans/{plan}/members', [MembershipController::class, 'enroll'])->whereNumber('plan');
+                Route::post('/{membership}/cancel', [MembershipController::class, 'cancel'])->whereNumber('membership');
             });
 
             // Codes shoppers show at the till: loyalty cards, gift certificates, memberships
