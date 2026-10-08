@@ -30,6 +30,15 @@ use App\Http\Controllers\EventRegistrationController;
 use App\Http\Controllers\FlashDealController;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\ReferralController;
+use App\Http\Controllers\BusinessLocationController;
+use App\Http\Controllers\FeaturedController;
+use App\Http\Controllers\GiftCertificateController;
+use App\Http\Controllers\LoyaltyController;
+use App\Http\Controllers\MembershipController;
+use App\Http\Controllers\PartnershipController;
+use App\Http\Controllers\PromotionController;
+use App\Http\Controllers\TillController;
+use App\Http\Controllers\WalletController;
 use App\Http\Controllers\BusinessPageEditorController;
 use App\Http\Controllers\SearchController;
 use App\Http\Controllers\BusinessDashboardController;
@@ -104,6 +113,11 @@ Route::middleware('maintenance')->group(function () {
         Route::get('/events/{slug}', [EventBrowseController::class, 'show']);
         Route::get('/flash-deals', [FlashDealController::class, 'index']);
         Route::get('/business/{businessId}/announcements', [AnnouncementController::class, 'forBusiness'])->whereNumber('businessId');
+        Route::get('/business/{businessId}/loyalty', [LoyaltyController::class, 'forBusiness'])->whereNumber('businessId');
+        Route::get('/business/{businessId}/memberships', [MembershipController::class, 'forBusiness'])->whereNumber('businessId');
+        Route::get('/promotions', [PromotionController::class, 'running']);
+        Route::get('/featured', [FeaturedController::class, 'showing']);
+        Route::get('/promotions/{slug}', [PromotionController::class, 'show']);
     });
 
     // Protected routes
@@ -165,6 +179,11 @@ Route::middleware('maintenance')->group(function () {
             ->whereNumber('event')->middleware('throttle:claim');
         Route::delete('/events/{event}/register', [EventRegistrationController::class, 'unregister'])->whereNumber('event');
         Route::get('/my/events', [EventRegistrationController::class, 'mine']);
+
+        // Wallet: loyalty cards (and, later, gift certificates and memberships)
+        Route::post('/loyalty/{program}/join', [LoyaltyController::class, 'join'])->whereNumber('program')->middleware('throttle:claim');
+        Route::get('/my/wallet', [WalletController::class, 'index']);
+        Route::post('/business/{businessId}/gift-certificates', [GiftCertificateController::class, 'request'])->whereNumber('businessId')->middleware('throttle:claim');
 
         // Business-side: the till. These sat in the plain auth:sanctum block,
         // outside both the subscription gate and the ability gate — so a
@@ -358,6 +377,75 @@ Route::middleware('maintenance')->group(function () {
             });
 
             // The page editor: blocks, validated against config/blocks.php.
+            // Loyalty programs
+            Route::prefix('business/loyalty')->middleware('business:business.manage_offers')->group(function () {
+                Route::get('/', [LoyaltyController::class, 'index']);
+                Route::post('/', [LoyaltyController::class, 'store']);
+                Route::put('/{program}', [LoyaltyController::class, 'update'])->whereNumber('program');
+                Route::delete('/{program}', [LoyaltyController::class, 'destroy'])->whereNumber('program');
+            });
+
+            // Gift certificates (paid for at the business)
+            Route::prefix('business/gift-certificates')->middleware('business:business.manage_offers')->group(function () {
+                Route::get('/', [GiftCertificateController::class, 'index']);
+                Route::post('/', [GiftCertificateController::class, 'store']);
+                Route::put('/settings', [GiftCertificateController::class, 'settings']);
+                Route::post('/{gift}/void', [GiftCertificateController::class, 'void'])->whereNumber('gift');
+            });
+
+            // Membership plans and members (paid for at the business)
+            Route::prefix('business/memberships')->middleware('business:business.manage_offers')->group(function () {
+                Route::get('/', [MembershipController::class, 'plans']);
+                Route::post('/plans', [MembershipController::class, 'storePlan']);
+                Route::put('/plans/{plan}', [MembershipController::class, 'updatePlan'])->whereNumber('plan');
+                Route::post('/plans/{plan}/members', [MembershipController::class, 'enroll'])->whereNumber('plan');
+                Route::post('/{membership}/cancel', [MembershipController::class, 'cancel'])->whereNumber('membership');
+            });
+
+            // Working with other businesses: partnership profile, directory,
+            // organizations and their members, joint promotions
+            Route::middleware('business:business.manage_offers')->group(function () {
+                Route::get('/business/partners/profile', [PartnershipController::class, 'profile']);
+                Route::put('/business/partners/profile', [PartnershipController::class, 'updateProfile']);
+                Route::get('/business/partners/directory', [PartnershipController::class, 'directory']);
+                Route::get('/business/partners/search', [PartnershipController::class, 'search']);
+                Route::get('/business/organization/members', [PartnershipController::class, 'members']);
+                Route::post('/business/organization/members', [PartnershipController::class, 'invite']);
+                Route::delete('/business/organization/members/{business}', [PartnershipController::class, 'removeMember'])->whereNumber('business');
+                Route::get('/business/organizations', [PartnershipController::class, 'myOrganizations']);
+                Route::post('/business/organizations/{organization}/respond', [PartnershipController::class, 'respond'])->whereNumber('organization');
+
+                Route::get('/business/promotions', [PromotionController::class, 'index']);
+                Route::post('/business/promotions', [PromotionController::class, 'store']);
+                Route::post('/business/promotions/{promotion}', [PromotionController::class, 'update'])->whereNumber('promotion');
+                Route::post('/business/promotions/{promotion}/invite', [PromotionController::class, 'invite'])->whereNumber('promotion');
+                Route::post('/business/promotions/{promotion}/participate', [PromotionController::class, 'participate'])->whereNumber('promotion');
+                Route::put('/business/promotions/{promotion}/participants/{participant}', [PromotionController::class, 'arrange'])->whereNumber(['promotion', 'participant']);
+                Route::put('/business/promotions/{promotion}/status', [PromotionController::class, 'setStatus'])->whereNumber('promotion');
+            });
+
+            // Featured placement (paid to Thryft by card)
+            Route::prefix('business/featured')->middleware('business:business.manage_billing')->group(function () {
+                Route::get('/', [FeaturedController::class, 'index']);
+                Route::post('/', [FeaturedController::class, 'store']);
+                Route::post('/{placement}/confirm', [FeaturedController::class, 'confirm'])->whereNumber('placement');
+            });
+
+            // Codes shoppers show at the till: loyalty cards, gift certificates, memberships
+            Route::prefix('business/till')->middleware('business:business.redeem')->group(function () {
+                Route::get('/{code}', [TillController::class, 'show']);
+                Route::post('/{code}', [TillController::class, 'act'])->middleware('throttle:redeem');
+            });
+
+            // Locations. Anyone on the team can read them (to pin an offer or
+            // event to one); changing them takes manage_locations.
+            Route::get('/business/locations', [BusinessLocationController::class, 'index'])->middleware('business');
+            Route::prefix('business/locations')->middleware('business:business.manage_locations')->group(function () {
+                Route::post('/', [BusinessLocationController::class, 'store']);
+                Route::put('/{location}', [BusinessLocationController::class, 'update'])->whereNumber('location');
+                Route::delete('/{location}', [BusinessLocationController::class, 'destroy'])->whereNumber('location');
+            });
+
             Route::prefix('business/page')->middleware('business:business.edit_page')->group(function () {
                 Route::get('/', [BusinessPageEditorController::class, 'show']);
                 Route::put('/', [BusinessPageEditorController::class, 'update']);

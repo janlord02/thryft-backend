@@ -27,6 +27,7 @@ class EventResource extends JsonResource
             'image_url' => $event->image_url,
             'starts_at' => $event->starts_at,
             'ends_at' => $event->ends_at,
+            'timezone' => $event->zone(),
             'venue_name' => $event->venue_name,
             'address' => $event->address,
             'city' => $event->city,

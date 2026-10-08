@@ -18,6 +18,7 @@ class Referral extends Model
         'referred_user_id',
         'kind',
         'status',
+        'reward_id',
         'qualified_at',
         'rewarded_at',
         'reward_note',
@@ -36,5 +37,10 @@ class Referral extends Model
     public function referredUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'referred_user_id');
+    }
+
+    public function reward(): BelongsTo
+    {
+        return $this->belongsTo(ReferralReward::class, 'reward_id');
     }
 }

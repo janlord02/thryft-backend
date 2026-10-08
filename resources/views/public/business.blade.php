@@ -5,6 +5,9 @@
     // BusinessPageController. Metadata is NOT declared as sections: the layout
     // renders it with {{ }}, because @yield is unescaped.
     $location = $public['location'] ?? null;
+    // A page that opens with a Hero block brings its own photo and heading;
+    // printing the cover and name above it showed both twice.
+    $opensWithHero = !empty($blocks) && ($blocks[0]['type'] ?? null) === 'hero';
 @endphp
 
 @push('structured_data')
@@ -45,11 +48,15 @@
 @endpush
 
 @section('content')
-    @if($public['cover_url'])
-        <img class="cover" src="{{ $public['cover_url'] }}" alt="{{ $public['name'] }}">
-    @endif
+    @if($opensWithHero)
+        @include('public.blocks', ['blocks' => [array_shift($blocks)], 'business' => $business, 'pageHeading' => true])
+    @else
+        @if($public['cover_url'])
+            <img class="cover" src="{{ $public['cover_url'] }}" alt="{{ $public['name'] }}">
+        @endif
 
-    <h1>{{ $public['name'] }}</h1>
+        <h1>{{ $public['name'] }}</h1>
+    @endif
 
     @if($location && ($location['city'] || $location['address']))
         <p class="muted">{{ collect([$location['address'], $location['city'], $location['state'], $location['zipcode']])->filter()->implode(', ') }}</p>
@@ -99,5 +106,38 @@
     @empty
         <p class="muted">No active deals right now.</p>
     @endforelse
+    @endif
+
+    @if(!empty($community['members']))
+        <h2>Member businesses</h2>
+        @foreach($community['members'] as $member)
+            <div class="card">
+                <h3><a href="{{ route('public.business', ['business' => $member['slug']]) }}">{{ $member['name'] }}</a></h3>
+                @if($member['city'])<p class="muted">{{ $member['city'] }}</p>@endif
+            </div>
+        @endforeach
+    @endif
+
+    @if(!empty($community['promotions']))
+        <h2>Promotions</h2>
+        @foreach($community['promotions'] as $promo)
+            <div class="card">
+                <h3><a href="{{ $promo['public_url'] }}">{{ $promo['title'] }}</a></h3>
+                @if($promo['ends_at'])<p class="muted">Until {{ \Carbon\Carbon::parse($promo['ends_at'])->toFormattedDateString() }}</p>@endif
+            </div>
+        @endforeach
+    @endif
+
+    @if(count($public['locations'] ?? []) > 1)
+        <h2>Locations</h2>
+        @foreach($public['locations'] as $place)
+            <div class="card">
+                <h3>{{ $place['label'] }}</h3>
+                <p class="muted">{{ collect([$place['address'], $place['city'], $place['state'], $place['zipcode']])->filter()->implode(', ') }}</p>
+                @foreach($place['hours'] as $row)
+                    <p class="muted">{{ $row['label'] }} {{ $row['value'] }}</p>
+                @endforeach
+            </div>
+        @endforeach
     @endif
 @endsection

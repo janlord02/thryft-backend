@@ -8,6 +8,9 @@ use App\Models\BusinessMember;
 use App\Models\ClaimedCoupon;
 use App\Models\Coupon;
 use App\Models\Referral;
+use App\Models\ReferralReward;
+use App\Services\Referrals;
+use App\Services\StripeCredits;
 use App\Models\User;
 use App\Models\UserSubscription;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -193,5 +196,119 @@ class ReferralsTest extends TestCase
             ->patchJson("/api/admin/referrals/{$pending->id}", ['status' => 'void', 'reward_note' => 'duplicate account'])
             ->assertStatus(200)
             ->assertJsonPath('data.status', 'void');
+    }
+
+    // -----------------------------------------------------------------
+    // Automatic rewards
+    // -----------------------------------------------------------------
+
+    private function qualifiedReferral(string $kind): Referral
+    {
+        $user = User::factory()->create(['role' => $kind === 'business' ? 'business' : 'user']);
+
+        return Referral::create([
+            'business_id' => $this->business->id,
+            'referred_user_id' => $user->id,
+            'kind' => $kind,
+            'status' => 'qualified',
+            'qualified_at' => now(),
+        ]);
+    }
+
+    /** A fake Stripe that records what it was asked to credit. */
+    private function fakeStripe(): object
+    {
+        $fake = new class extends StripeCredits {
+            public array $calls = [];
+
+            public function credit(string $customerId, int $cents, string $description, string $idempotencyKey): string
+            {
+                $this->calls[] = compact('customerId', 'cents', 'idempotencyKey');
+
+                return 'cbtxn_' . count($this->calls);
+            }
+        };
+        $this->app->instance(StripeCredits::class, $fake);
+
+        return $fake;
+    }
+
+    public function test_a_qualified_business_referral_extends_a_plan_paid_outside_stripe()
+    {
+        $plan = $this->owner->userSubscriptions()->first();
+        $plan->update(['stripe_subscription_id' => null, 'ends_at' => now()->addDays(10)->startOfSecond()]);
+        $referral = $this->qualifiedReferral('business');
+
+        app(Referrals::class)->rewardBusiness($this->business->id);
+
+        $this->assertTrue($plan->fresh()->ends_at->equalTo(now()->addDays(10)->startOfSecond()->addMonthNoOverflow()));
+        $referral->refresh();
+        $this->assertSame('rewarded', $referral->status);
+        $this->assertStringStartsWith('1 free month', $referral->reward_note);
+
+        $panel = $this->actingAs($this->owner, 'sanctum')->getJson('/api/business/referrals')->json('data');
+        $this->assertSame('extension', $panel['rewards'][0]['method']);
+        $this->assertSame('business', $panel['rewards'][0]['reason']);
+    }
+
+    public function test_a_stripe_customer_gets_one_months_credit_exactly_once()
+    {
+        $stripe = $this->fakeStripe();
+        $this->owner->forceFill(['stripe_customer_id' => 'cus_123'])->save();
+        $plan = $this->owner->userSubscriptions()->with('subscription')->first();
+        $plan->subscription->update(['price' => 348, 'billing_cycle' => 'yearly']);
+        $this->qualifiedReferral('business');
+
+        app(Referrals::class)->rewardBusiness($this->business->id);
+        app(Referrals::class)->rewardBusiness($this->business->id);
+        $this->artisan('referrals:apply-rewards')->assertSuccessful();
+
+        $this->assertCount(1, $stripe->calls);
+        $this->assertSame('cus_123', $stripe->calls[0]['customerId']);
+        $this->assertSame(2900, $stripe->calls[0]['cents']); // $348 a year → $29 a month
+        $reward = ReferralReward::sole();
+        $this->assertSame('thryft-referral-reward-' . $reward->id, $stripe->calls[0]['idempotencyKey']);
+        $this->assertSame('stripe_credit', $reward->method);
+        $this->assertSame('cbtxn_1', $reward->stripe_balance_transaction_id);
+    }
+
+    public function test_ten_qualified_shoppers_earn_one_free_month()
+    {
+        $this->fakeStripe();
+        foreach (range(1, 9) as $i) {
+            $this->qualifiedReferral('shopper');
+        }
+        app(Referrals::class)->rewardBusiness($this->business->id);
+
+        $this->assertSame(0, ReferralReward::count());
+        $panel = $this->actingAs($this->owner, 'sanctum')->getJson('/api/business/referrals')->json('data');
+        $this->assertSame(9, $panel['shoppers_toward_next']);
+
+        $this->qualifiedReferral('shopper');
+        $this->qualifiedReferral('shopper');
+        app(Referrals::class)->rewardBusiness($this->business->id);
+
+        $this->assertSame(1, ReferralReward::count());
+        $this->assertSame(10, Referral::where('status', 'rewarded')->count());
+        $this->assertSame(1, Referral::where('status', 'qualified')->count());
+        $panel = $this->actingAs($this->owner, 'sanctum')->getJson('/api/business/referrals')->json('data');
+        $this->assertSame(1, $panel['shoppers_toward_next']);
+        $this->assertSame('shoppers', $panel['rewards'][0]['reason']);
+    }
+
+    public function test_a_reward_waits_for_an_active_plan_then_the_daily_run_applies_it()
+    {
+        $this->owner->userSubscriptions()->update(['status' => 'expired', 'ends_at' => now()->subDay(), 'current_period_end' => now()->subDay()]);
+        $referral = $this->qualifiedReferral('business');
+
+        app(Referrals::class)->rewardBusiness($this->business->id);
+        $this->assertNull(ReferralReward::sole()->applied_at);
+        $this->assertSame('qualified', $referral->fresh()->status);
+
+        UserSubscription::factory()->create(['user_id' => $this->owner->id, 'stripe_subscription_id' => null, 'ends_at' => now()->addMonth()]);
+        $this->artisan('referrals:apply-rewards')->assertSuccessful();
+
+        $this->assertNotNull(ReferralReward::sole()->applied_at);
+        $this->assertSame('rewarded', $referral->fresh()->status);
     }
 }

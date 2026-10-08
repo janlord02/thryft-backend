@@ -8,7 +8,10 @@
                 @if(!empty($block['image_url']))
                     <img class="cover" src="{{ $block['image_url'] }}" alt="{{ $block['headline'] ?? '' }}">
                 @endif
-                @if(!empty($block['headline']))<h2 class="blk-hero__h">{{ $block['headline'] }}</h2>@endif
+                @if(!empty($block['headline']))
+                    @if(!empty($pageHeading))<h1 class="blk-hero__h">{{ $block['headline'] }}</h1>
+                    @else<h2 class="blk-hero__h">{{ $block['headline'] }}</h2>@endif
+                @endif
                 @if(!empty($block['subheadline']))<p class="muted">{{ $block['subheadline'] }}</p>@endif
             </section>
             @break
@@ -78,7 +81,7 @@
                         <div class="card">
                             <h3><a href="{{ $event['public_url'] }}">{{ $event['title'] }}</a></h3>
                             <p class="muted">
-                                {{ \Carbon\Carbon::parse($event['starts_at'])->format('D, M j \a\t g:i A') }}
+                                {{ \Carbon\Carbon::parse($event['starts_at'])->setTimezone($event['timezone'] ?? config('app.timezone'))->format('D, M j \a\t g:i A') }}
                                 @if(!empty($event['venue_name'])) · {{ $event['venue_name'] }}@endif
                             </p>
                         </div>
