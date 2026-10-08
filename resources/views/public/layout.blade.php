@@ -34,8 +34,14 @@
 
     @stack('structured_data')
 
+    @php
+        // The brand colour set in admin Settings, so these pages match the app.
+        // Checked as a hex value because it is printed into CSS.
+        $accent = (string) \App\Models\Setting::getValue('primary', '#0f766e');
+        $accent = preg_match('/^#[0-9A-Fa-f]{3,8}$/', $accent) ? $accent : '#0f766e';
+    @endphp
     <style>
-        :root { --ink:#1a1a1a; --muted:#6b7280; --line:#e5e7eb; --bg:#fff; --accent:#0f766e; }
+        :root { --ink:#1a1a1a; --muted:#6b7280; --line:#e5e7eb; --bg:#fff; --accent:{{ $accent }}; }
         * { box-sizing: border-box; }
         body {
             margin: 0; background: var(--bg); color: var(--ink);

@@ -76,9 +76,11 @@ class CouponController extends Controller
             'is_active' => 'nullable|boolean',
             'is_featured' => 'nullable|boolean',
             'is_flash' => 'nullable|boolean',
+            'members_only' => 'nullable|boolean',
             'product_ids' => 'nullable|array',
             'product_ids.*' => 'integer|exists:products,id',
             'terms_conditions' => 'nullable|array',
+            'location_id' => ['nullable', 'integer', \Illuminate\Validation\Rule::exists('business_locations', 'id')->where('business_id', BusinessResolver::forUser(Auth::user())?->id)],
         ]);
 
         // A flash deal is defined by its end: without one it is just a coupon.
@@ -138,6 +140,8 @@ class CouponController extends Controller
                 'is_active' => $isActive,
                 'is_featured' => $isFeatured,
                 'is_flash' => $request->boolean('is_flash'),
+                'members_only' => $request->boolean('members_only'),
+                'location_id' => $request->location_id ?: null,
                 'terms_conditions' => $request->terms_conditions,
             ]);
 
@@ -217,6 +221,9 @@ class CouponController extends Controller
         if (isset($data['is_flash'])) {
             $data['is_flash'] = filter_var($data['is_flash'], FILTER_VALIDATE_BOOLEAN);
         }
+        if (isset($data['members_only'])) {
+            $data['members_only'] = filter_var($data['members_only'], FILTER_VALIDATE_BOOLEAN);
+        }
 
         // Manual validation for FormData
         $validator = \Validator::make($data, [
@@ -237,9 +244,11 @@ class CouponController extends Controller
             'is_active' => 'nullable|boolean',
             'is_featured' => 'nullable|boolean',
             'is_flash' => 'nullable|boolean',
+            'members_only' => 'nullable|boolean',
             'product_ids' => 'nullable|array',
             'product_ids.*' => 'integer|exists:products,id',
             'terms_conditions' => 'nullable|array',
+            'location_id' => ['nullable', 'integer', \Illuminate\Validation\Rule::exists('business_locations', 'id')->where('business_id', BusinessResolver::forUser(Auth::user())?->id)],
         ]);
 
         if (!$validator->fails() && !empty($data['is_flash']) && empty($data['expires_at'])) {
@@ -288,6 +297,8 @@ class CouponController extends Controller
                 'is_active' => $data['is_active'] ?? true,
                 'is_featured' => $data['is_featured'] ?? false,
                 'is_flash' => $data['is_flash'] ?? false,
+                'members_only' => $data['members_only'] ?? false,
+                'location_id' => ($data['location_id'] ?? null) ?: null,
                 'terms_conditions' => $data['terms_conditions'] ?? null,
             ]);
 

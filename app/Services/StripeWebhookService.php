@@ -266,6 +266,13 @@ class StripeWebhookService
             'payment_intent_id' => $paymentIntent->id ?? null,
             'customer_id' => $paymentIntent->customer ?? null,
         ]);
+
+        // A featured placement switches on here even if the shopper's tab
+        // closed before the app could confirm it.
+        \App\Http\Controllers\FeaturedController::onPaymentSucceeded(
+            $paymentIntent->metadata->featured_placement_id ?? null,
+            (string) ($paymentIntent->id ?? ''),
+        );
     }
 
     // ---------------------------------------------------------------------

@@ -30,7 +30,7 @@ class EventPageController extends Controller
         $public = (new EventResource($event))->toArray(request());
         $biz = (new PublicBusinessResource($event->business))->toArray(request());
 
-        $when = $event->starts_at->format('D, M j \a\t g:i A');
+        $when = $event->localStartsAt()->format('D, M j \a\t g:i A');
         $where = collect([$event->venue_name, $event->address, $event->city])->filter()->unique()->implode(', ');
 
         return view('public.event', [

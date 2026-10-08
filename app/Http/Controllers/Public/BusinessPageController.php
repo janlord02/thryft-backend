@@ -59,6 +59,7 @@ class BusinessPageController extends Controller
             'coupons' => $coupons,
             'blocks' => PageBlocks::resolve($business),
             'announcements' => $announcements,
+            'community' => $business->communityPayload(),
             'public' => $public,
             'metaTitle' => $public['name'] . ' — Thryft',
             'metaDescription' => $this->describeBusiness($public),

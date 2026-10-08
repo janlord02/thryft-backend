@@ -41,3 +41,10 @@ Schedule::command('coupons:remind-expiring')
     ->dailyAt('14:00')
     ->withoutOverlapping()
     ->onOneServer();
+
+// Referral free months that could not be applied when earned (no active plan
+// yet, or Stripe unreachable) are retried here.
+Schedule::command('referrals:apply-rewards')
+    ->dailyAt('03:45')
+    ->withoutOverlapping()
+    ->onOneServer();
