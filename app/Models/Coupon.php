@@ -41,6 +41,7 @@ class Coupon extends Model
         'is_active',
         'is_featured',
         'is_flash',
+        'members_only',
         'followers_notified_at',
         'terms_conditions',
     ];
@@ -60,6 +61,7 @@ class Coupon extends Model
         'is_active' => 'boolean',
         'is_featured' => 'boolean',
         'is_flash' => 'boolean',
+        'members_only' => 'boolean',
         'followers_notified_at' => 'datetime',
         'terms_conditions' => 'array',
     ];
@@ -164,7 +166,8 @@ class Coupon extends Model
     public function getFormattedDiscountAttribute()
     {
         if ($this->discount_type === 'percentage') {
-            return $this->discount_percentage . '%';
+            // 15.00 → "15%", 12.50 → "12.5%".
+            return rtrim(rtrim(number_format((float) $this->discount_percentage, 2, '.', ''), '0'), '.') . '%';
         }
         return '$' . number_format((float) $this->discount_amount, 2);
     }

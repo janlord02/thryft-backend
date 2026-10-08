@@ -366,6 +366,7 @@ class UserDashboardController extends Controller
                         'is_active' => $coupon->is_active,
                         'is_valid' => $coupon->is_valid,
                         'can_be_used' => $coupon->canBeClaimed(),
+                            'members_only' => (bool) $coupon->members_only,
                         'is_claimed_by_user' => $isClaimedByUser,
                         'claimed_at' => $claimedAt,
                         'product_id' => null, // Will be set if attached to a product
@@ -468,6 +469,7 @@ class UserDashboardController extends Controller
                             'is_active' => $coupon->is_active,
                             'is_valid' => $coupon->is_valid,
                             'can_be_used' => $coupon->canBeClaimed(),
+                            'members_only' => (bool) $coupon->members_only,
                             'is_claimed_by_user' => $isClaimedByUser,
                             'claimed_at' => $claimedAt,
                             'product_id' => $product->id,
@@ -484,6 +486,8 @@ class UserDashboardController extends Controller
             $productsWithCoupons = $formattedProducts->where('has_coupons', true)->values();
             $allProducts = $formattedProducts->values();
 
+            $entity = \App\Models\Business::where('owner_user_id', $business->id)->first() ?? new \App\Models\Business();
+
             return response()->json([
                 'status' => 'success',
                 'data' => [
@@ -493,13 +497,14 @@ class UserDashboardController extends Controller
                         'business_name' => $business->business_name,
                         'business_description' => $business->business_description,
                         // The merchant-built page, resolved against live deals and events.
-                        'page_blocks' => \App\Support\PageBlocks::resolve(
-                            \App\Models\Business::where('owner_user_id', $business->id)->first() ?? new \App\Models\Business(),
-                        ),
+                        'page_blocks' => \App\Support\PageBlocks::resolve($entity),
+                        'locations' => $entity->exists ? $entity->publicLocations() : [],
+                        'community' => $entity->exists ? $entity->communityPayload() : ['kind' => 'business', 'members' => [], 'promotions' => []],
                         'is_favorite' => $user
                             ? $user->favoriteBusinesses()->whereKey($business->id)->exists()
                             : false,
-                        'email' => $business->email,
+                        // The business's published contact email, never the owner's login.
+                        'email' => $entity->email,
                         'phone' => $business->phone,
                         'address' => $business->address,
                         'city' => $business->city,
@@ -580,6 +585,25 @@ class UserDashboardController extends Controller
                 'status' => 'error',
                 'message' => 'Coupon is no longer available',
             ], 400);
+        }
+
+        // Members-only offers need a current membership at that business.
+        if ($coupon->members_only && !\App\Models\Membership::holds($user->id, (int) $coupon->business_id)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This offer is for members. Ask the business about joining.',
+                'code' => 'members_only',
+            ], 403);
+        }
+
+        // A partner promotion can hold this offer back until the shopper has
+        // used the one that unlocks it.
+        if ($reason = \App\Http\Controllers\PromotionController::lockReason($coupon, $user->id)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $reason,
+                'code' => 'promotion_locked',
+            ], 403);
         }
 
         // product_id used to be written straight through from the request, so a

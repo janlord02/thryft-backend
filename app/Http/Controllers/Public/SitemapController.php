@@ -78,6 +78,17 @@ class SitemapController extends Controller
                 }
             });
 
+        \App\Models\Promotion::query()->running()
+            ->whereHas('organizer', fn ($q) => $q->where('status', 'active'))
+            ->orderBy('id')
+            ->each(function ($promotion) use (&$urls) {
+                $urls[] = [
+                    'loc' => route('public.promotion', ['slug' => $promotion->slug]),
+                    'lastmod' => optional($promotion->updated_at)->toAtomString(),
+                    'changefreq' => 'daily',
+                ];
+            });
+
         return response($this->render($urls), 200, [
             'Content-Type' => 'application/xml',
             'Cache-Control' => 'public, max-age=' . self::CACHE_SECONDS,
