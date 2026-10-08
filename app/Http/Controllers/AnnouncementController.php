@@ -97,8 +97,7 @@ class AnnouncementController extends Controller
     /** What a business has posted, newest first. The app addresses a business by its owner's id. */
     public function forBusiness(int $businessId)
     {
-        $business = Business::query()->whereKey($businessId)->first()
-            ?? Business::query()->where('owner_user_id', $businessId)->first();
+        $business = Business::fromAppId($businessId);
 
         if (!$business || $business->status !== 'active') {
             return AnnouncementResource::collection(collect());

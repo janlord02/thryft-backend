@@ -72,6 +72,7 @@ class GuestBrowseController extends Controller
 
         return (new PublicBusinessResource($business))->additional([
             'page_blocks' => \App\Support\PageBlocks::resolve($business),
+            'community' => $business->communityPayload(),
             'deals' => PublicCouponResource::collection(
                 Coupon::where('business_id', $business->id)->active()->valid()
                     ->orderByDesc('is_featured')->limit(50)->get()

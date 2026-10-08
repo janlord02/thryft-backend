@@ -55,6 +55,7 @@ class PublicBusinessResource extends JsonResource
                 'latitude' => $location->latitude,
                 'longitude' => $location->longitude,
             ] : null,
+            'locations' => $this->resource->publicLocations(),
         ];
     }
 

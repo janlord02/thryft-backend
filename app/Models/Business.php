@@ -36,12 +36,20 @@ class Business extends Model
         'cover_path',
         'page_blocks',
         'page_updated_at',
+        'sells_gift_certificates',
+        'kind',
+        'open_to_partnerships',
+        'partnership_interests',
+        'partnership_pitch',
         'status',
     ];
 
     protected $casts = [
         'page_blocks' => 'array',
         'page_updated_at' => 'datetime',
+        'sells_gift_certificates' => 'boolean',
+        'open_to_partnerships' => 'boolean',
+        'partnership_interests' => 'array',
     ];
 
     protected static function boot()
@@ -181,5 +189,95 @@ class Business extends Model
         }
 
         return $slug;
+    }
+
+    /** Every location, main one first, in the shape the app and the public page show. */
+    public function publicLocations(): array
+    {
+        return $this->locations()
+            ->orderByDesc('is_primary')
+            ->orderBy('label')
+            ->get()
+            ->map(fn (BusinessLocation $l) => [
+                'id' => $l->id,
+                'label' => $l->label,
+                'is_primary' => (bool) $l->is_primary,
+                'address' => $l->address,
+                'city' => $l->city,
+                'state' => $l->state,
+                'zipcode' => $l->zipcode,
+                'country' => $l->country,
+                'latitude' => $l->latitude,
+                'longitude' => $l->longitude,
+                'hours' => $l->hours ?: [],
+            ])->values()->all();
+    }
+
+    /** Who a wallet item is from, as the shopper's wallet shows it. */
+    public function walletSummary(): array
+    {
+        return [
+            'id' => $this->id,
+            'name' => $this->name,
+            'owner_user_id' => $this->owner_user_id,
+            // The uploaded logo only: the owner's default avatar is a stranger's face here.
+            'logo_url' => $this->logo_path ? asset('storage/' . $this->logo_path) : null,
+        ];
+    }
+
+    public function isOrganization(): bool
+    {
+        return $this->kind === 'organization';
+    }
+
+    /** Businesses that belong to this organization. */
+    public function memberBusinesses(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(self::class, 'organization_members', 'organization_id', 'business_id')
+            ->withPivot('status')
+            ->withTimestamps();
+    }
+
+    /** Organizations this business belongs to. */
+    public function organizations(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(self::class, 'organization_members', 'business_id', 'organization_id')
+            ->withPivot('status')
+            ->withTimestamps();
+    }
+
+    /**
+     * What a business page shows about working with others: an
+     * organization's member businesses, and running promotions this
+     * business organizes or takes part in.
+     */
+    public function communityPayload(): array
+    {
+        $members = $this->isOrganization()
+            ? $this->memberBusinesses()->wherePivot('status', 'active')->where('businesses.status', 'active')->with(['primaryLocation', 'owner'])->orderBy('name')->get()
+                ->map(fn (Business $b) => \App\Http\Controllers\PartnershipController::cardFor($b))->values()->all()
+            : [];
+
+        $promotions = Promotion::query()->running()
+            ->where(fn ($q) => $q->where('organizer_business_id', $this->id)
+                ->orWhereHas('participants', fn ($p) => $p->where('business_id', $this->id)->where('status', 'accepted')))
+            ->orderByRaw('ends_at IS NULL, ends_at')
+            ->limit(10)
+            ->get()
+            ->map(fn (Promotion $p) => ['slug' => $p->slug, 'title' => $p->title, 'type' => $p->type, 'ends_at' => $p->ends_at, 'public_url' => $p->public_url])
+            ->values()->all();
+
+        return ['kind' => $this->kind, 'members' => $members, 'promotions' => $promotions];
+    }
+
+    /**
+     * The business behind an id from the consumer app, which addresses a
+     * business by its owner's user id. That is tried first: a businesses.id
+     * that happens to equal the number would otherwise be someone else's.
+     */
+    public static function fromAppId(int $id): ?self
+    {
+        return static::query()->where('owner_user_id', $id)->first()
+            ?? static::query()->whereKey($id)->first();
     }
 }

@@ -33,6 +33,7 @@ class Event extends Model
         'image_path',
         'starts_at',
         'ends_at',
+        'timezone',
         'venue_name',
         'address',
         'city',
@@ -102,6 +103,22 @@ class Event extends Model
                     $q2->whereNull('ends_at')->where('starts_at', '>=', $now);
                 });
         });
+    }
+
+    /** The host's zone, for anything rendered on the server. */
+    public function zone(): string
+    {
+        return $this->timezone ?: config('app.timezone');
+    }
+
+    public function localStartsAt(): \Illuminate\Support\Carbon
+    {
+        return $this->starts_at->copy()->setTimezone($this->zone());
+    }
+
+    public function localEndsAt(): ?\Illuminate\Support\Carbon
+    {
+        return $this->ends_at?->copy()->setTimezone($this->zone());
     }
 
     public function isOver(): bool
