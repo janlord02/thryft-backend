@@ -316,6 +316,21 @@ class BusinessSubscriptionController extends Controller
             ], 404);
         }
 
+        // When the free plan ends: the plan's own date (metadata.expires_at)
+        // if it has one, otherwise not until the business changes plan. This
+        // used to be a hard-coded 2025-12-27, so every claim after that date
+        // created a subscription that had already expired and locked the
+        // business out of every page.
+        $absoluteExpiry = data_get($freePlan->metadata, 'expires_at');
+        $endsAt = $absoluteExpiry ? Carbon::parse($absoluteExpiry)->endOfDay() : null;
+
+        if ($endsAt && $endsAt->isPast()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'The free plan ended on ' . $endsAt->toFormattedDateString() . '. Please choose another plan.',
+            ], 422);
+        }
+
         // Check if user already has an active subscription
         $existingActive = UserSubscription::where('user_id', $user->id)
             ->where('status', 'active')
@@ -325,13 +340,15 @@ class BusinessSubscriptionController extends Controller
         if ($existingActive) {
             // If they're already on the free plan, just return success (no need to create duplicate)
             if ($existingActive->subscription_id === $freePlan->id) {
-                // Update the expiry date if needed (in case the free plan expiry date changed)
-                $absoluteExpiry = data_get($freePlan->metadata, 'expires_at');
-                if ($absoluteExpiry) {
-                    $targetEndsAt = Carbon::parse($absoluteExpiry)->endOfDay();
-                    if (!$existingActive->ends_at || $existingActive->ends_at->ne($targetEndsAt)) {
-                        $existingActive->update(['ends_at' => $targetEndsAt]);
-                    }
+                // Bring the end date in line with the plan's. This is also what
+                // revives a free subscription stranded on the old hard-coded
+                // date: still 'active' in status but past its end, so the
+                // gate refused it while this said "already on the free plan".
+                $changed = $endsAt === null
+                    ? $existingActive->ends_at !== null
+                    : (!$existingActive->ends_at || $existingActive->ends_at->ne($endsAt));
+                if ($changed) {
+                    $existingActive->update(['ends_at' => $endsAt]);
                 }
 
                 return response()->json([
@@ -349,8 +366,13 @@ class BusinessSubscriptionController extends Controller
         } else {
             // Only check if they've claimed free before if they don't have an active subscription
             // (i.e., this is a first-time claim, not a plan change)
+            // A claim that ended before it started never gave any free time
+            // (the old hard-coded end date did that), so it doesn't count.
             $claimedFreeBefore = UserSubscription::where('user_id', $user->id)
                 ->where('subscription_id', $freePlan->id)
+                ->where(function ($query) {
+                    $query->whereNull('ends_at')->orWhereColumn('ends_at', '>', 'starts_at');
+                })
                 ->exists();
 
             if ($claimedFreeBefore) {
@@ -362,8 +384,6 @@ class BusinessSubscriptionController extends Controller
         }
 
         $startsAt = now();
-        // Always end Free subscriptions on Dec 1, 2025
-        $endsAt = Carbon::parse('2025-12-27')->endOfDay();
 
         $userSubscription = UserSubscription::create([
             'user_id' => $user->id,
